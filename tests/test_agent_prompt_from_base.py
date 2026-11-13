@@ -185,6 +185,17 @@ def test_a_directory_on_base_is_refused(tmp_path):
     assert r.returncode == 1 and "not a regular file" in r.stderr
 
 
+def test_a_trailing_slash_path_is_refused(tmp_path):
+    """`ls-tree ref -- dir/` lists the directory's contents; that must not pass for a file."""
+    c = checkout(tmp_path, content=None)
+    origin = tmp_path / "origin"
+    put(origin, AGENT + "/inner.md", GOOD)
+    commit_all(origin, "dir")
+    git(c.ws, "fetch", "-q", "origin")
+    r = c.run(path=AGENT + "/")
+    assert r.returncode == 1 and "plain relative path" in r.stderr
+
+
 # ---- inputs are untrusted text ----------------------------------------------------------------------
 
 

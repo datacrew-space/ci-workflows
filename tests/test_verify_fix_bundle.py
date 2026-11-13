@@ -222,6 +222,14 @@ def test_a_token_shaped_string_in_a_patch_is_refused_without_printing_it(sc):
     assert TOKEN not in proc.stdout + proc.stderr
 
 
+def test_a_token_shaped_string_inside_a_binary_file_is_refused(sc):
+    """git prints `Binary files differ` for a blob with a NUL byte; the scan must still see the text."""
+    commit(sc.work, {"apps/gw/src/blob.py": "x\x00y " + TOKEN + "\n"})
+    proc, out = sc.run(sc.bundle())
+    refused(proc, out, "hold something token-shaped")
+    assert TOKEN not in proc.stdout + proc.stderr
+
+
 def test_a_token_shaped_string_in_a_commit_message_is_refused(sc):
     commit(sc.work, {"apps/gw/src/a.py": "a = 2\n"}, f"fix, key was {TOKEN}")
     proc, out = sc.run(sc.bundle())

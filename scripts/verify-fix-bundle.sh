@@ -111,7 +111,7 @@ fi
 
 # Pipe status matters: `git log` failing must not read as a clean scan.
 log=$(mktemp)
-if ! g log -p --format=full "$reviewed..refs/heads/fix" > "$log"; then
+if ! g log -p --text --format=full "$reviewed..refs/heads/fix" > "$log"; then
   refuse "git log failed"
 fi
 if ! bash "$here/scan-secrets.sh" - < "$log"; then

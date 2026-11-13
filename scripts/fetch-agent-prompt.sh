@@ -36,7 +36,7 @@ fail() {
 [[ "$base" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "base-branch must be a literal branch name ([A-Za-z0-9._/-]+)"
 [[ "$path" =~ ^[A-Za-z0-9._/-]+$ ]] || fail "agent prompt path '$path' must match [A-Za-z0-9._/-]+"
 case "$path" in
-  /* | ../* | */../* | */.. | .. | ./* | */./* | */. | . | *//*) fail "agent prompt path '$path' must be a plain relative path" ;;
+  /* | ../* | */../* | */.. | .. | ./* | */./* | */. | . | *//* | */) fail "agent prompt path '$path' must be a plain relative path" ;;
 esac
 
 g() { git -C "$repo" -c core.hooksPath=/dev/null -c core.fsmonitor=false -c core.pager=cat "$@"; }
@@ -46,6 +46,8 @@ g rev-parse --verify --quiet "$ref^{commit}" > /dev/null || fail "base branch or
 
 # `ls-tree` is the only way to tell "absent" from "present but bad" without parsing error text.
 entry=$(g ls-tree "$ref" -- "$path") || fail "cannot read origin/$base"
+[ "$(printf '%s
+' "$entry" | grep -c .)" -le 1 ] || fail "'$path' on origin/$base is not a single file"
 mkdir -p "$(dirname "$dest")" || fail "cannot create the destination folder"
 
 if [ -z "$entry" ]; then
