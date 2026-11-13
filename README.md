@@ -79,6 +79,13 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 - **One secret per fetch.** Each secret is fetched by name so an agent's environment holds only what
   it needs. The Infisical action is pinned by commit SHA to a version that honours `secret-name`.
 
+## Skill: configure a repository's CI
+
+[`skills/configure-repo-ci/`](skills/configure-repo-ci/SKILL.md) is an agent skill that applies these
+conventions to another repository: the `ci-ok` gate, pre-commit as the lint definition, per-role
+GitHub Apps and tokens, the review loop, legible run logs, and the known variations and drift seen
+across repositories. Copy the folder into your agent's skills directory.
+
 ## Develop
 
 ```bash
