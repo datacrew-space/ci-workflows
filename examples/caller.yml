@@ -41,6 +41,8 @@ jobs:
       # protected-paths-extra: |              # globs, one per line, always protected
       #   *auth*.py
       #   */generated/*
+      # reviewer-agent: .agents/agents/code-reviewer.md   # read from the BASE branch, not the PR; if it is
+      # responder-agent: .agents/agents/review-responder.md # not there yet, the generic template is used (warning)
       # runs-on: '["self-hosted", "linux"]'   # JSON; default is "ubuntu-latest"
       # push-runs-on: '"ubuntu-latest"'       # JSON; unset disables the responder's push
     secrets:

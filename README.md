@@ -19,7 +19,7 @@ ends **green** (ready to merge) or **red** with a `needs-human` label. See the h
 2. Add the repo secrets `INFISICAL_CLIENT_ID` and `INFISICAL_CLIENT_SECRET` (a machine identity).
 3. Copy [`examples/caller.yml`](examples/caller.yml) to `.github/workflows/claude-code-review.yml`
    and fill in the placeholders. Pin the `uses:` ref **and** `tooling-ref` to the same commit SHA.
-4. Copy the two agent prompts from [`examples/`](examples) to `.agents/agents/` and edit the rules to
+4. Copy the two agent prompts from [`examples/`](examples) to `.agents/agents/` (merge them first: the loop reads them from the base branch) and edit the rules to
    fit the repository. They are templates; the parts marked "CI contract" are read by the workflow.
 5. Set the repository variable `CLAUDE_REVIEW_ENABLED=true` when you want it on.
 
@@ -37,7 +37,7 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 | `base-branch` | Branch PRs must target for the loop to run; default `main`. A PR on any other base (a stacked PR) is skipped, because the reviewer's diff would include its parent's commits |
 | `protected-paths-extra` | Extra always-protected paths, one bash glob per line, for files inside otherwise editable directories (auth modules, generated files). Adds to the default-deny guard and can never allow a path |
 | `tooling-ref` | Commit of this repository to take the guard, scanner and report scripts from |
-| `reviewer-agent`, `responder-agent` | Agent prompt paths in the calling repository |
+| `reviewer-agent`, `responder-agent` | Agent prompt paths in the calling repository. They are read from the **base branch**, not from the PR (see design notes). If a file is not on the base yet, the generic template from `tooling-ref` is used, with a warning |
 
 ## Design notes
 
@@ -47,6 +47,23 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 - **The agents never hold write power.** They get read-mostly tokens, and neither can run
   repository code. The responder's commits travel as a git bundle to a separate job that holds no
   agent, verifies the bundle, runs the guard and the secret scan, and pushes without force.
+- **A PR cannot edit its own reviewer.** The reviewer and responder prompts are taken from
+  `origin/<base-branch>` ([`scripts/fetch-agent-prompt.sh`](scripts/fetch-agent-prompt.sh)),
+  validated (regular file, text, at most 100 KB, starts with a `---` front-matter line) and copied
+  to a runner temp folder that the agent follows. A change to `code-reviewer.md` takes effect for
+  the PRs after the one that merges it. *First adoption:* when the file does not exist on the base
+  yet (the PR that adds the loop), the review falls back to the generic template in
+  [`examples/`](examples) from the pinned tooling checkout, with a visible warning and a line in the
+  step summary. That template is not controlled by the PR, so this does not let a PR pick its own
+  reviewer. Failing closed instead would leave the adoption PR red with nothing to fix, and the
+  review is advisory next to the required checks. A file that exists on the base but is invalid is
+  an error, never silently replaced. Merge your own prompt files first to get your own rules.
+- **The push job verifies, then pushes.** All checks on the agent's bundle live in one script,
+  [`scripts/verify-fix-bundle.sh`](scripts/verify-fix-bundle.sh): size cap, bundle integrity, the
+  reviewed commit, ancestry, a 20-commit cap, the guard on the net diff and on every commit, and the
+  secret scan, all in a fresh repository. It runs before any token is minted; the workflow keeps only
+  token minting, the call and the final non-force `git push`. It is tested with real bundles
+  (`tests/test_verify_fix_bundle.py`).
 - **Default-deny guard.** [`scripts/protected-paths.sh`](scripts/protected-paths.sh) allows only
   source, test and documentation paths; scripts, workflows, Dockerfiles, compose files, configs,
   dependency manifests and agent instructions are always refused.
