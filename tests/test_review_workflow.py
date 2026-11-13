@@ -15,6 +15,12 @@ CALLER = Path(__file__).resolve().parents[1] / "examples" / "caller.yml"
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "claude-code-review.yml"
 
 
+WORKFLOW_TEXT = WORKFLOW.read_text(encoding="utf-8")
+_DOC = yaml.safe_load(WORKFLOW_TEXT)
+# PyYAML reads the key `on` as the boolean True.
+ON_INPUTS = _DOC.get("on", _DOC.get(True))["workflow_call"]["inputs"]
+
+
 @pytest.fixture(scope="module")
 def jobs() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
@@ -27,16 +33,25 @@ def step(job: dict, step_id: str) -> dict:
 def test_review_step_accepts_the_responder_as_a_bot_actor(jobs):
     """Without this the round-2 review fails on the responder's own push and never escalates."""
     allowed = step(jobs["claude-review"], "claude-review")["with"]["allowed_bots"]
-    # The caller's `allowed-bots` input only ADDS bots: the responder is in both branches of the expression.
-    assert allowed.count("ci-review-responder") == 2
+    # The caller's `allowed-bots` input only ADDS bots: the responder login is in both branches of the expression.
+    assert allowed.count("inputs.responder-bot-login") == 2
     assert "inputs.allowed-bots" in allowed
     assert "'*'" not in allowed
+    # and the input's default is the responder App every existing caller already uses
+    assert ON_INPUTS["responder-bot-login"]["default"] == "ci-review-responder"
 
 
 def test_allowed_bots_is_an_input_that_defaults_to_no_extra_bots():
     """A bot that opens or pushes PRs (e.g. the issue dispatcher) must be listed or its review fails to start."""
-    spec = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]["allowed-bots"]
-    assert spec["default"] == ""
+    assert ON_INPUTS["allowed-bots"]["default"] == ""
+
+
+def test_the_responder_commit_author_comes_from_the_inputs_not_a_hardcoded_id(jobs):
+    w = step(jobs["respond"], "respond-agent")["with"]
+    assert w["bot_name"] == "${{ format('{0}[bot]', inputs.responder-bot-login) }}"
+    assert w["bot_id"] == "${{ inputs.responder-bot-id }}"
+    assert ON_INPUTS["responder-bot-id"]["default"] == "355840606"
+    assert "355840606" not in WORKFLOW_TEXT.replace('default: "355840606"', "")
 
 
 @pytest.mark.parametrize(("job", "step_id"), [("claude-review", "agent-token"), ("respond", "agent-token")])
@@ -175,7 +190,7 @@ def test_a_failed_post_does_not_fail_the_review_job(jobs):
 
 def test_round_two_only_follows_a_responder_push(jobs):
     prior = step(jobs["claude-review"], "verdict")["env"]["PRIOR"]
-    assert prior == "${{ github.event.sender.login == 'ci-review-responder[bot]' && '1' || '0' }}"
+    assert prior == "${{ github.event.sender.login == format('{0}[bot]', inputs.responder-bot-login) && '1' || '0' }}"
 
 
 def test_the_responders_push_does_not_cancel_the_run_that_pushed(jobs):
