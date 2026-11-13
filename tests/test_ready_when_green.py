@@ -132,3 +132,29 @@ def test_a_failed_ready_call_is_reported_and_the_label_is_kept(capsys):
     assert main(run_gh=run_gh) == 1
     assert not any(c[:2] == ["pr", "edit"] for c in calls)
     assert "#30" in capsys.readouterr().err
+
+
+def test_a_failing_gh_shows_what_gh_said(monkeypatch, capsys):
+    import subprocess
+
+    import ready_when_green
+
+    def boom(*args, **kwargs):
+        raise subprocess.CalledProcessError(1, ["gh"], stderr="GraphQL: Resource not accessible by integration\nmore")
+
+    monkeypatch.setattr(ready_when_green.subprocess, "run", boom)
+
+    assert main() == 1
+    err = capsys.readouterr().err
+    assert "Resource not accessible" in err
+    assert "more" not in err  # only gh's first line
+
+
+def test_the_workflow_token_can_read_checks_and_statuses():
+    import yaml
+
+    path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ready-when-green.yml"
+    steps = yaml.safe_load(path.read_text(encoding="utf-8"))["jobs"]["sweep"]["steps"]
+    mint = next(s for s in steps if str(s.get("uses", "")).startswith("actions/create-github-app-token"))
+    assert mint["with"].get("permission-checks") == "read"
+    assert mint["with"].get("permission-statuses") == "read"

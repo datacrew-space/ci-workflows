@@ -261,6 +261,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: read
           permission-pull-requests: read
+          permission-issues: read # the Spec axis reads the issue a PR closes; without it every review skips that axis
           permission-checks: read
           permission-actions: read
           permission-statuses: read # `gh pr checks` reads commit statuses too; read-only, so no forged verdict

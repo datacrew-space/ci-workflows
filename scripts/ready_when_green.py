@@ -76,6 +76,11 @@ def list_open_prs(run_gh: RunGh) -> list[dict]:
 def _run_gh(args: list[str]) -> str | None:
     try:
         done = subprocess.run(["gh", *args], capture_output=True, text=True, timeout=60, check=True)
+    except subprocess.CalledProcessError as err:
+        first_line = (err.stderr or "").strip().splitlines()[:1]
+        if first_line:
+            sys.stderr.write(f"ready_when_green: gh said: {first_line[0]}\n")
+        return None
     except (OSError, subprocess.SubprocessError):
         return None
     return done.stdout

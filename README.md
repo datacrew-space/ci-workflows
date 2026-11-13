@@ -126,7 +126,7 @@ resulting PR. The generalised inputs in this repository (defaults, `secret-sourc
 the `ci-ok` check is green on its head, the PR is marked ready (which starts the review loop) and the
 label is removed. A stacked PR waits while the PR it is based on is still a draft. No label, no flip.
 
-**Setup.** Make a GitHub App (pull requests write, issues write; it can be the same app as another) and
+**Setup.** Make a GitHub App (pull requests write, issues write, checks read, statuses read; it can be the same app as another) and
 store `READY_APP_ID` and `READY_APP_PRIVATE_KEY`. Copy
 [`examples/ready-when-green-caller.yml`](examples/ready-when-green-caller.yml), set the CI workflow name
 it listens to, pin the SHA, and set `READY_WHEN_GREEN_ENABLED=true`. Your CI must publish a check called
