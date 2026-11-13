@@ -19,16 +19,27 @@ bash tests/test-classify-claude-review.sh    # needs jq
 pre-commit install --hook-type pre-commit --hook-type commit-msg   # local guards, see docs/guards.md
 ```
 
-## Public repo rules
+CI (`.github/workflows/ci.yml`) runs the tests, actionlint and both public-repo guards. With no
+denylist on your machine, the private-terms hook skips with a warning; in CI it fails closed.
 
-This repository is public. Everything in it, in commits, in PR text and in CI logs is world-readable.
+## Rules
 
-- No private names: no internal hostnames, account or repo names other than this one, personal
-  emails, local paths or usernames, internal tool names. Use placeholders.
-- Commit with the noreply identity already set in the repo's git config. Do not change it.
-- CI logs are public. Never echo a secret or an untrusted PR field into a log.
+Org-wide rules: [`docs/org/working-rules.md`](docs/org/working-rules.md). Vocabulary:
+[`GLOSSARY.md`](GLOSSARY.md). Org context and the repository map: [`docs/org/README.md`](docs/org/README.md).
+
+Specific to this repository:
+
+- It is public, and so are its PR text and CI logs. Write nothing private (see *Public by default*
+  in `docs/org/working-rules.md`); use placeholders. Never echo a secret or an untrusted PR field
+  into a log.
+- Commit with a GitHub noreply address. Repository git config is not versioned, so set it on each
+  fresh clone: `git config user.email <id>+<login>@users.noreply.github.com`. The `commit-identity`
+  hook refuses anything else.
+- The guard, scanner and report scripts live in `scripts/`, and callers run them pinned to a commit
+  SHA (`tooling-ref`). This repository's own CI runs them from `main` by design; see
+  [`docs/guards.md`](docs/guards.md). Never weaken one to make a change pass. Rules, hooks and the CI gate are in
+  [`docs/guards.md`](docs/guards.md).
 - Never force-push, never push to `main`, never merge your own PR.
-- Guard scripts live in `scripts/`. Do not weaken them to make a change pass. Rules, hooks and the CI gate are in `docs/guards.md`.
 
 ## Agent skills
 
@@ -43,4 +54,5 @@ The five default roles (`needs-triage`, `needs-info`, `ready-for-agent`, `ready-
 
 ### Domain docs
 
-Single-context: one `GLOSSARY.md` and `docs/adr/` at the repo root. See `docs/agents/domain.md`.
+Single-context: `GLOSSARY.md` at the repo root, and `docs/adr/` (not created yet). See
+`docs/agents/domain.md`.
