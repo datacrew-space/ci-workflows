@@ -37,3 +37,16 @@ jobs:
         run: |
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
           ./actionlint -color
+
+  # BOOTSTRAP ONLY. This calls the pull request's own copy of the workflow with the pull request's own
+  # scripts, so a pull request can edit them and make this job pass without a denylist. It is not a
+  # trustworthy gate, and must not be a required check, until a follow-up PR changes it to
+  #   uses: datacrew-space/ci-workflows/.github/workflows/guards.yml@main
+  #   with: { tooling-ref: main }
+  # (see examples/guards-caller.yml). That form cannot be used before this file exists on main.
+  guards:
+    uses: ./.github/workflows/guards.yml
+    with:
+      tooling-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    secrets:
+      PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
