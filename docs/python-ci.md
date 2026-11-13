@@ -85,6 +85,12 @@ The ruff base does the same with `extend-exclude = ["**/vendor/**", "**/third_pa
 `force-exclude = true`. Without `force-exclude`, ruff lints a file it was passed explicitly, which is
 how pre-commit passes files, even when the file is excluded.
 
+### Secrets
+
+`detect-secrets` scans every file, **including workflow files**, because a hardcoded credential in a
+workflow is a common mistake. Only lines that pin a commit SHA (`uses:` or `config-ref:`) are skipped,
+since the entropy plugins flag SHAs. Use `${{ secrets.NAME }}` instead of a literal value.
+
 ## Ruff
 
 `configs/ruff-base.toml` pins an explicit rule set (`E4 E7 E9 F BLE S110 S112 ASYNC T20 TRY002`, line

@@ -166,3 +166,13 @@ def test_scaffold_caller_uses_the_reusable_workflow_and_keeps_the_gate():
     assert caller["permissions"] == {"contents": "read"}
     # The default cancels only pull-request runs, never pushes to the default branch.
     assert caller["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
+
+
+def test_detect_secrets_scans_workflow_files_and_skips_only_sha_pin_lines():
+    (hook,) = [h for r in PRECOMMIT["repos"] for h in r["hooks"] if h["id"] == "detect-secrets"]
+    assert not re.search(hook["exclude"], ".github/workflows/ci.yml")
+    pattern = re.compile(hook["args"][hook["args"].index("--exclude-lines") + 1])
+    assert pattern.search("    uses: actions/checkout@" + "a" * 40 + " # v7.0.1")
+    assert pattern.search("      config-ref: " + "b" * 40)
+    assert not pattern.search("      token: ghp_" + "a" * 36)
+    assert not pattern.search("      API_KEY: " + "c" * 40)
