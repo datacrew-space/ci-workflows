@@ -48,7 +48,9 @@ repos:
         # break a baseline entry. Secrets never belong in a workflow file.
         exclude: '(^|/)(uv\.lock|\.secrets\.baseline|\.github/workflows/.*)$'
   # uv-lock keeps uv.lock in step with pyproject.toml. Delete this block in a repository without a
-  # lockfile. For a project below the root add:  args: [--directory, path/to/project]
+  # lockfile. For a project below the root, set BOTH of these on the hook, because the hook's default
+  # `files` only matches the root:  args: [--directory, path/to/project]
+  # and  files: '^path/to/project/(pyproject\.toml|uv\.lock)$'
   - repo: https://github.com/astral-sh/uv-pre-commit
     rev: 0.13.7
     hooks:
