@@ -25,9 +25,9 @@ add your repository's own rules.
 | | `agents/code-review-architect.md` | [`examples/code-reviewer.md`](../examples/code-reviewer.md) |
 |---|---|---|
 | Triggered by | A human, in an interactive session | The review workflow, on every pull request |
-| Tools | `Read, Glob, Grep, Bash`; Bash is broad, so it can run tests in a scratch checkout | Tightly restricted: only the exact git and `gh` forms the workflow allows |
+| Tools | `Read, Glob, Grep, Bash`; Bash is broad, so it can run tests in a scratch checkout | Restricted by the workflow's `--allowedTools` to the exact git and `gh` forms it allows |
 | Output | A written report to whoever asked, with a verdict of APPROVE, REQUEST CHANGES or COMMENT | `review.md` and a one-word `verdict` file the workflow reads (the "CI contract") |
-| Scope | Correctness, tests and architecture | Standards and Spec axes against the repo's own rules |
+| Scope | Correctness, tests and architecture | Standards, Spec and Verification axes against the repo's own rules |
 
 Do not point the workflow's `reviewer-agent` input at `code-review-architect.md`: it has no CI
 contract sections, and its broad Bash access is not safe in an unattended run.

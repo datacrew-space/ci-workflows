@@ -16,6 +16,7 @@ agent, status report). `README.md` explains usage; the header of
 ```bash
 python -m pytest tests -q                    # needs pytest and pyyaml
 bash tests/test-classify-claude-review.sh    # needs jq
+pre-commit install --hook-type pre-commit --hook-type commit-msg   # local guards, see docs/guards.md
 ```
 
 ## Public repo rules
@@ -27,7 +28,7 @@ This repository is public. Everything in it, in commits, in PR text and in CI lo
 - Commit with the noreply identity already set in the repo's git config. Do not change it.
 - CI logs are public. Never echo a secret or an untrusted PR field into a log.
 - Never force-push, never push to `main`, never merge your own PR.
-- Guard scripts live in `scripts/`. Do not weaken them to make a change pass.
+- Guard scripts live in `scripts/`. Do not weaken them to make a change pass. Rules, hooks and the CI gate are in `docs/guards.md`.
 
 ## Agent skills
 
