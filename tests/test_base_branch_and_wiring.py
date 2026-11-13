@@ -56,29 +56,20 @@ def test_the_reviewers_git_forms_follow_the_base_branch(jobs):
         assert f"Bash({form})" in args
 
 
-GUARD_CALL = 'if ! bash "$TOOLING/scripts/guard-commits.sh" "$clean" "$REVIEWED_SHA" refs/heads/fix; then'
+def test_the_verify_step_gets_the_extra_patterns_and_runs_before_the_push(jobs):
+    """The per-commit and endpoint guards run inside the verifier (real bundles: test_verify_fix_bundle.py)."""
+    verify = next(s for s in jobs["push"]["steps"] if s.get("id") == "verify")
+    assert verify["env"]["PROTECTED_EXTRA"] == "${{ inputs.protected-paths-extra }}"
+    ids = [s.get("id") for s in jobs["push"]["steps"]]
+    assert ids.index("verify") < ids.index("push")
+    assert "PROTECTED_EXTRA" not in str(next(s for s in jobs["push"]["steps"] if s.get("id") == "push"))
 
 
-def test_the_push_step_judges_every_commit_before_it_pushes(jobs):
-    push = next(s for s in jobs["push"]["steps"] if s.get("id") == "push")
-    assert push["env"]["PROTECTED_EXTRA"] == "${{ inputs.protected-paths-extra }}"
-    script = push["run"]
-    # the exact call: the real range (reviewed commit .. fix tip), its exit status checked,
-    # from the pinned tooling checkout and never the PR's own copy
-    assert script.count(GUARD_CALL) == 1
-    lines = script.splitlines()
-    at = lines.index(next(line for line in lines if line.strip() == GUARD_CALL))
-    assert "pushed=false" in lines[at + 2] and lines[at + 3].strip() == "exit 1"
-    assert "|| true" not in script
-    assert script.index("guard-commits.sh") < script.rindex("scan-secrets")
-    assert script.index("guard-commits.sh") < script.index('push "$url"')
-
-
-def test_the_extra_patterns_reach_the_endpoint_guard_too(jobs):
-    """The endpoint guard runs in the same step, so it inherits PROTECTED_EXTRA from that step's env."""
-    push = next(s for s in jobs["push"]["steps"] if s.get("id") == "push")
-    assert 'bash "$guard" < "$changed"' in push["run"]
-    assert "PROTECTED_EXTRA" in push["env"]
+def test_the_verifier_hands_the_extra_patterns_to_both_guards():
+    text = (WORKFLOW.parents[2] / "scripts" / "verify-fix-bundle.sh").read_text(encoding="utf-8")
+    assert 'bash "$here/protected-paths.sh" < "$changed"' in text  # env passes through unchanged
+    assert 'bash "$here/guard-commits.sh" "$clean" "$reviewed" refs/heads/fix' in text
+    assert "PROTECTED_EXTRA=" not in text  # never reset or narrowed inside the script
 
 
 def test_the_responder_agent_never_receives_the_extra_patterns(jobs):
