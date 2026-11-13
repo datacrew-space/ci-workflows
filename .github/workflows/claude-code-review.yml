@@ -95,9 +95,13 @@ on:
         type: string
         default: main
       reviewer-agent:
+        description: >-
+          Path of the reviewer prompt in the calling repository. Read from the BASE branch, not the PR.
+          If it is not on the base yet, the generic template from tooling-ref is used, with a warning.
         type: string
         default: .agents/agents/code-reviewer.md
       responder-agent:
+        description: Path of the responder prompt. Read from the BASE branch, like reviewer-agent.
         type: string
         default: .agents/agents/review-responder.md
     secrets:
@@ -155,6 +159,20 @@ jobs:
 
       - name: Locate the tooling
         run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+
+      # The prompt the agent follows comes from the BASE branch, never from this PR: a PR that edits
+      # its own agent file would otherwise change how it is reviewed. Validated, then copied out of
+      # the workspace. If the file is not on the base yet (the PR that adopts the loop), the generic
+      # template from the pinned tooling is used, with a warning. See scripts/fetch-agent-prompt.sh.
+      - name: Take the reviewer prompt from the base branch
+        env:
+          BASE: ${{ inputs.base-branch }}
+          AGENT_PATH: ${{ inputs.reviewer-agent }}
+        run: |
+          out=$(bash "$TOOLING/scripts/fetch-agent-prompt.sh" "$GITHUB_WORKSPACE" "$BASE" "$AGENT_PATH" \
+            "$RUNNER_TEMP/agents/code-reviewer.md" "$TOOLING/examples/code-reviewer.md")
+          echo "$out"
+          echo "reviewer prompt: $out (from $AGENT_PATH)" >> "$GITHUB_STEP_SUMMARY"
 
       # The one folder the agent may write to: its review and verdict files.
       # (The `runner` context is not available in job-level `env`, so it is set here.)
@@ -268,7 +286,7 @@ jobs:
             --allowedTools "Read,Grep,Glob,Edit(/${{ runner.temp }}/review/**),Write(/${{ runner.temp }}/review/**),Bash(git diff origin/${{ inputs.base-branch }}...HEAD),Bash(git diff --stat origin/${{ inputs.base-branch }}...HEAD),Bash(git diff --name-only origin/${{ inputs.base-branch }}...HEAD),Bash(git log --oneline origin/${{ inputs.base-branch }}..HEAD),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh issue view:*)"
             --disallowedTools "Read(//proc/**),Read(//root/**),Read(//etc/**),Read(//actions-runner/**),Read(/${{ runner.temp }}/_runner_file_commands/**),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(less:*),Bash(more:*),Bash(env:*),Bash(printenv:*),Bash(strings:*),Bash(base64:*),Bash(xxd:*),Bash(od:*)"
           prompt: |
-            Act as the code-reviewer agent defined in ${{ inputs.reviewer-agent }} and follow it exactly.
+            Act as the code-reviewer agent defined in ${{ runner.temp }}/agents/code-reviewer.md and follow it exactly.
             Review pull request ${{ github.repository }}/pull/${{ github.event.pull_request.number }}.
             The base branch of this repository's PRs is origin/${{ inputs.base-branch }}: diff against it, not
             against any other branch.
@@ -534,6 +552,20 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      # The prompt the agent follows comes from the BASE branch, never from this PR: a PR that edits
+      # its own agent file would otherwise change how it is reviewed. Validated, then copied out of
+      # the workspace. If the file is not on the base yet (the PR that adopts the loop), the generic
+      # template from the pinned tooling is used, with a warning. See scripts/fetch-agent-prompt.sh.
+      - name: Take the responder prompt from the base branch
+        env:
+          BASE: ${{ inputs.base-branch }}
+          AGENT_PATH: ${{ inputs.responder-agent }}
+        run: |
+          out=$(bash "$TOOLING/scripts/fetch-agent-prompt.sh" "$GITHUB_WORKSPACE" "$BASE" "$AGENT_PATH" \
+            "$RUNNER_TEMP/agents/review-responder.md" "$TOOLING/examples/review-responder.md")
+          echo "$out"
+          echo "responder prompt: $out (from $AGENT_PATH)" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Run review-responder agent
         id: respond-agent
         continue-on-error: true
@@ -558,7 +590,7 @@ jobs:
             --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/**),Write(/${{ github.workspace }}/**),Edit(/${{ runner.temp }}/response/**),Write(/${{ runner.temp }}/response/**),Bash(git add -- *),Bash(git commit -m *),Bash(git status),Bash(git status --short),Bash(git diff),Bash(git diff --stat),Bash(git diff --cached),Bash(git diff origin/${{ inputs.base-branch }}...HEAD),Bash(git log --oneline -n 20),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh issue view:*)"
             --disallowedTools "Edit(/${{ github.workspace }}/.git/**),Write(/${{ github.workspace }}/.git/**),Read(//proc/**),Read(//root/**),Read(//etc/**),Read(//actions-runner/**),Read(/${{ runner.temp }}/_runner_file_commands/**),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(less:*),Bash(more:*),Bash(env:*),Bash(printenv:*),Bash(strings:*),Bash(base64:*),Bash(xxd:*),Bash(od:*)"
           prompt: |
-            Act as the review-responder agent defined in ${{ inputs.responder-agent }} and follow it exactly,
+            Act as the review-responder agent defined in ${{ runner.temp }}/agents/review-responder.md and follow it exactly,
             with these CI-mode overrides: this is round 1; you are on the reviewed commit; do NOT push (a separate
             workflow step pushes your commits); do NOT wait for CI; do NOT add labels or edit the PR.
             Work every finding from the latest review on ${{ github.repository }}/pull/${{ github.event.pull_request.number }}.
@@ -667,7 +699,7 @@ jobs:
     runs-on: ${{ fromJSON(inputs.push-runs-on || '"unconfigured"') }}
     timeout-minutes: 10
     outputs:
-      pushed: ${{ steps.push.outputs.pushed }}
+      pushed: ${{ steps.push.outputs.pushed || steps.verify.outputs.pushed }}
       count: ${{ steps.push.outputs.count }}
     permissions:
       contents: read
@@ -697,6 +729,20 @@ jobs:
         with:
           name: review-fix-bundle-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/in
+
+      # All verification happens here, BEFORE any token exists in this job. The bundle is data from a
+      # job where an agent ran; scripts/verify-fix-bundle.sh (from the pinned tooling checkout, tested
+      # with real bundles in tests/test_verify_fix_bundle.py) fetches it into a fresh repository and
+      # refuses on any failed check: size, integrity, the reviewed commit, ancestry, the commit cap,
+      # the protected-paths guard on the net diff and on every commit, and the secret scan.
+      - name: Verify the agent's bundle
+        id: verify
+        env:
+          BUNDLE: ${{ runner.temp }}/in/fix.bundle
+          BRANCH: ${{ github.event.pull_request.head.ref }}
+          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+          PROTECTED_EXTRA: ${{ inputs.protected-paths-extra }}
+        run: bash "$TOOLING/scripts/verify-fix-bundle.sh" "$BUNDLE" "$REVIEWED_SHA" "$BRANCH" "$GITHUB_WORKSPACE"
 
       - name: Fetch CI_REVIEW_RESPONDER_APP_ID
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
@@ -738,114 +784,28 @@ jobs:
           echo "CI_REVIEW_RESPONDER_PRIVATE_KEY=" >> "$GITHUB_ENV"
           echo "CI_REVIEW_RESPONDER_APP_ID=" >> "$GITHUB_ENV"
 
+      # Pushes only what the verify step left ready. BRANCH is attacker-controlled text: it only ever
+      # appears quoted, never in a command position. The push runs from the fresh repository the
+      # verify step built (default config, no hooks), non-force, to the PR's own branch.
+      # The app-token action masks the raw token only; mask its base64 form before any use.
       - name: Push the fixes (non-force, the PR's own branch)
         id: push
+        if: ${{ steps.verify.outputs.ready == 'true' }}
         env:
           PUSH_TOKEN: ${{ steps.push-token.outputs.token }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
-          REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
-          PROTECTED_EXTRA: ${{ inputs.protected-paths-extra }}
           REPO: ${{ github.repository }}
-          BUNDLE: ${{ runner.temp }}/in/fix.bundle
+          CLEAN: ${{ steps.verify.outputs.clean }}
+          COUNT: ${{ steps.verify.outputs.count }}
         run: |
-          # BRANCH is attacker-controlled text: it only ever appears quoted, never in a command position.
-          # The agent could write hooks or config under .git/, so the commits are fetched into a fresh
-          # repository (default config, no hooks) and every check and the push run there.
-          # The app-token action masks the raw token only; mask its base64 form before any use.
           b64=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
           echo "::add-mask::$b64"
           auth="AUTHORIZATION: basic $b64"
-          url="https://github.com/${REPO}.git"
-          clean=$(mktemp -d)
-          git init -q "$clean"
-          git -C "$clean" config user.name "ci-review-responder[bot]"
-          git -C "$clean" config user.email "355840606+ci-review-responder[bot]@users.noreply.github.com"
-          # The bundle is data from an agent job: cap its size, verify it, fetch it into the fresh
-          # repository. The reviewed commit comes from this job's own (agent-free) checkout.
-          if [ ! -s "$BUNDLE" ] || [ "$(stat -c %s "$BUNDLE")" -gt 20000000 ]; then
-            echo "::error::bundle missing or larger than 20 MB; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          # This job checked out exactly the reviewed commit and no agent ever ran in it.
-          git -C "$clean" fetch -q "$GITHUB_WORKSPACE" HEAD
-          if [ "$(git -C "$clean" rev-parse FETCH_HEAD)" != "$REVIEWED_SHA" ]; then
-            echo "::error::checkout is not the reviewed commit; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          if ! git -C "$clean" bundle verify "$BUNDLE" > /dev/null 2>&1; then
-            echo "::error::bundle failed verification; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          git -C "$clean" fetch -q "$BUNDLE" HEAD
-          git -C "$clean" update-ref refs/heads/fix FETCH_HEAD
-          if ! git -C "$clean" merge-base --is-ancestor "$REVIEWED_SHA" refs/heads/fix; then
-            echo "::error::the bundle does not descend from the reviewed commit; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          count=$(git -C "$clean" rev-list --count "$REVIEWED_SHA..refs/heads/fix")
-          if [ "$count" -gt 20 ]; then
-            echo "::error::$count commits is more than a round of fixes should be; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          if [ "$count" -eq 0 ]; then
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            echo "no new commits; nothing to push" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
-          # The agent must not rewrite the gate that grades it or change what runs in CI or production.
-          # scripts/protected-paths.sh decides (tests/test_protected_paths.py).
-          # The script is read from the pinned tooling checkout, never from the agent's workspace
-          # or the PR, which the agent could have edited. -z and --no-renames: a move OUT of a
-          # protected path lists only its destination otherwise, and git quotes non-ASCII names.
-          # An empty list is a pass, so a failing `git diff` must stop the push on its own.
-          guard=$(mktemp)
-          changed=$(mktemp)
-          if ! cp "$TOOLING/scripts/protected-paths.sh" "$guard"; then
-            echo "::error::cannot read protected-paths.sh from the tooling checkout; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          if ! git -C "$clean" diff -z --no-renames --name-only "$REVIEWED_SHA" refs/heads/fix > "$changed"; then
-            echo "::error::git diff failed; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          if ! bash "$guard" < "$changed"; then
-            echo "::error::the responder changed protected files (listed above); refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          # Every commit, not only the net change: a protected file changed in one commit and put back
-          # in the next leaves a clean net diff but lands in history on a merge or rebase. Merge
-          # commits are refused too.
-          if ! bash "$TOOLING/scripts/guard-commits.sh" "$clean" "$REVIEWED_SHA" refs/heads/fix; then
-            echo "::error::a responder commit was refused by guard-commits.sh (reason above); refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          # Nothing token-shaped may land on the branch: scan every commit message and patch. The
-          # scanner comes from the tooling checkout, like the guard.
-          scanner=$(mktemp)
-          if ! cp "$TOOLING/scripts/scan-secrets.sh" "$scanner"; then
-            echo "::error::cannot read scan-secrets.sh from the tooling checkout; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          if ! git -C "$clean" log -p --format=full "$REVIEWED_SHA..refs/heads/fix" | bash "$scanner" -; then
-            echo "::error::the responder's commits hold something token-shaped; refusing to push"
-            echo "pushed=false" >> "$GITHUB_OUTPUT"
-            exit 1
-          fi
-          git -C "$clean" -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=$auth" \
-            push "$url" "refs/heads/fix:refs/heads/$BRANCH"
+          git -C "$CLEAN" -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=$auth"             push "https://github.com/${REPO}.git" "refs/heads/fix:refs/heads/$BRANCH"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
-          echo "count=$count" >> "$GITHUB_OUTPUT"
-          echo "pushed $count commit(s) to $BRANCH" >> "$GITHUB_STEP_SUMMARY"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "pushed $COUNT commit(s) to $BRANCH" >> "$GITHUB_STEP_SUMMARY"
+
 
   # The ci-review-orchestrator: the single place that reports the loop on the PR. It runs after every
   # review (and after the responder, when it ran), so every run ends with exactly one log line.
