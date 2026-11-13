@@ -1,0 +1,179 @@
+name: Infra promote (reusable)
+
+# Promotes a green commit on the main branch to the deploy branch, and tags the promotion. It does
+# not deploy: a host-side deployer follows the deploy branch. Infrastructure repositories do not use
+# semantic versions; the tag <prefix><date>-<sha7> is an immutable record of what was promoted when,
+# and moving the deploy branch back to an earlier tag is the rollback.
+#
+# Call it as a job of the repository's own CI workflow, after the required aggregate check
+# (see examples/infra-promote-caller.yml).
+#
+# Safety:
+#   * The commit must already be on the main branch, and the deploy branch only moves forward
+#     (non-force, atomic push). An older commit, or one already promoted, is a no-op.
+#   * The required check (default ci-ok) is verified green for that exact commit through the API
+#     before anything moves. A check that is missing or still running is retried, then fails.
+#   * Scripts come from THIS repository at `tooling-ref`, never from the checkout. Pin the `uses:`
+#     ref and `tooling-ref` to the same reviewed commit SHA.
+#   * Promotions are serialised per repository and deploy branch; the newest commit wins.
+#   * The only secret is the optional PROMOTE_TOKEN (below). Nothing is inherited.
+#
+# PROMOTE_TOKEN: a token that may push the deploy branch and its tags. Without it the workflow uses
+# the run's GITHUB_TOKEN. If the deploy branch is protected by a ruleset or branch protection that
+# the GITHUB_TOKEN cannot bypass, pass a fine-grained token or a GitHub App token with contents:write.
+# The caller must grant `contents: write` and `checks: read` to this job either way.
+#
+# CI logs of a public repository are public; this workflow prints only shas, branch and tag names.
+
+on:
+  workflow_call:
+    inputs:
+      tooling-ref:
+        description: Commit of datacrew-space/ci-workflows that supplies the scripts. Pin it.
+        type: string
+        required: true
+      runs-on:
+        description: JSON runner label. A repository without hosted-runner minutes passes its own pool.
+        type: string
+        default: '"ubuntu-latest"'
+      main-branch:
+        description: Branch a promoted commit must already be on.
+        type: string
+        default: main
+      deploy-branch:
+        description: The pointer branch the deployer follows.
+        type: string
+        default: deploy
+      tag-prefix:
+        description: Prefix of the promotion tag, for example deploy/.
+        type: string
+        default: deploy/
+      required-check:
+        description: Name of the check that must be green on the commit.
+        type: string
+        default: ci-ok
+      sha:
+        description: Commit to promote. Empty means the commit that triggered the run.
+        type: string
+        default: ""
+      dry-run:
+        description: Decide and report, push nothing.
+        type: boolean
+        default: false
+    secrets:
+      PROMOTE_TOKEN:
+        description: Optional token allowed to push the deploy branch and tags. Default is GITHUB_TOKEN.
+        required: false
+    outputs:
+      result:
+        description: promoted or noop
+        value: ${{ jobs.promote.outputs.result }}
+      sha:
+        description: The commit considered.
+        value: ${{ jobs.promote.outputs.sha }}
+      previous:
+        description: The commit the deploy branch pointed at before (empty on the first promotion). The rollback target.
+        value: ${{ jobs.promote.outputs.previous }}
+      tag:
+        description: The promotion tag.
+        value: ${{ jobs.promote.outputs.tag }}
+
+permissions:
+  contents: write
+  checks: read
+
+jobs:
+  promote:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 15
+    concurrency:
+      group: infra-promote-${{ github.repository }}-${{ inputs.deploy-branch }}
+      cancel-in-progress: false
+    outputs:
+      result: ${{ steps.promote.outputs.result }}
+      sha: ${{ steps.promote.outputs.sha }}
+      previous: ${{ steps.promote.outputs.previous }}
+      tag: ${{ steps.promote.outputs.tag }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.PROMOTE_TOKEN || github.token }}
+          persist-credentials: true
+
+      # actions/checkout refuses a path outside the workspace, so fetch the tooling by hand. The
+      # repository is public: no credentials are needed or sent.
+      - name: Fetch the promote tooling
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          git init -q "$RUNNER_TEMP/ci-tooling"
+          git -C "$RUNNER_TEMP/ci-tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$RUNNER_TEMP/ci-tooling" checkout -q FETCH_HEAD
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Choose the commit
+        id: pick
+        env:
+          INPUT_SHA: ${{ inputs.sha }}
+          EVENT_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          sha="${INPUT_SHA:-$EVENT_SHA}"
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+
+      # Not yet decided (missing or running) is retried for up to three minutes; red fails at once.
+      - name: Require the check to be green on this commit
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.pick.outputs.sha }}
+          CHECK: ${{ inputs.required-check }}
+          TOOLING: ${{ runner.temp }}/ci-tooling
+        run: |
+          set -u
+          for attempt in $(seq 1 18); do
+            python "$TOOLING/scripts/check_required_green.py" --fetch "$REPO" "$SHA" "$CHECK"
+            rc=$?
+            if [ "$rc" -ne 2 ]; then exit "$rc"; fi
+            echo "attempt $attempt: not decided yet; waiting"
+            sleep 10
+          done
+          echo "::error::check '$CHECK' was never green on ${SHA:0:7}; not promoting" >&2
+          exit 1
+
+      - name: Promote
+        id: promote
+        env:
+          PROMOTE_SHA: ${{ steps.pick.outputs.sha }}
+          MAIN_BRANCH: ${{ inputs.main-branch }}
+          DEPLOY_BRANCH: ${{ inputs.deploy-branch }}
+          TAG_PREFIX: ${{ inputs.tag-prefix }}
+          DRY_RUN: ${{ inputs.dry-run && '1' || '0' }}
+          TOOLING: ${{ runner.temp }}/ci-tooling
+        run: bash "$TOOLING/scripts/promote-deploy.sh"
+
+      - name: Summary
+        if: always() && steps.promote.outputs.result != ''
+        env:
+          RESULT: ${{ steps.promote.outputs.result }}
+          SHA: ${{ steps.promote.outputs.sha }}
+          PREVIOUS: ${{ steps.promote.outputs.previous }}
+          TAG: ${{ steps.promote.outputs.tag }}
+          DEPLOY_BRANCH: ${{ inputs.deploy-branch }}
+        run: |
+          {
+            echo "### Promotion: $RESULT"
+            echo ""
+            echo "- commit: \`${SHA:0:7}\`"
+            echo "- branch: \`$DEPLOY_BRANCH\`"
+            echo "- tag: \`$TAG\`"
+            if [ -n "$PREVIOUS" ]; then
+              echo "- previous: \`${PREVIOUS:0:7}\` (rollback target)"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

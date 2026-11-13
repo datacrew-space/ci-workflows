@@ -1,0 +1,26 @@
+# Add the `promote` job to the repository's own CI workflow, after the required aggregate check
+# (`ci-ok` below). It promotes a green commit on main to the `deploy` branch and tags it; a host-side
+# deployer follows `deploy`. Pin BOTH the `uses:` ref and `tooling-ref` to the same reviewed commit
+# SHA of datacrew-space/ci-workflows. See docs/infra-deploy.md.
+#
+# Works from a private repository on a personal account: a public repository's reusable workflows
+# can be called from anywhere. `secrets: inherit` does not cross owners, so pass the token by name.
+jobs:
+  # ... your lint, test and `ci-ok` aggregate jobs ...
+
+  promote:
+    needs: ci-ok
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
+      checks: read
+    uses: datacrew-space/ci-workflows/.github/workflows/infra-promote.yml@<COMMIT_SHA>
+    with:
+      tooling-ref: <COMMIT_SHA>
+      # runs-on: '["self-hosted", "linux"]'   # JSON. Needed when hosted runners are not available.
+      # required-check: ci-ok
+      # deploy-branch: deploy
+      # tag-prefix: deploy/
+      # dry-run: true                         # try it first: decides and reports, pushes nothing
+    # secrets:
+    #   PROMOTE_TOKEN: ${{ secrets.PROMOTE_TOKEN }}   # only if `deploy` is protected against GITHUB_TOKEN
