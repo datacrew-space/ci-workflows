@@ -3,8 +3,8 @@
 # A wizard walks a human through a manual procedure, step by step.
 # Generated with the wizard skill; the library below is the stock one.
 #
-# Everything above the "STAGES" marker is the wizard library: do not hand-edit
-# it. Author the per-step stages below the marker.
+# Everything above the "STAGES" marker is the wizard library (the stock one, plus the secret-safety changes
+# marked in set_secret and the shell-hygiene lines at the top). Author the per-step stages below the marker.
 
 set -euo pipefail
 # A pasted secret must never reach a trace, even if the caller ran `bash -x` or exported SHELLOPTS.
@@ -309,14 +309,17 @@ app_stage() {
   step "On the App's settings page, copy the 'App ID' (a number, shown near the top)."
   step "Scroll to 'Private keys' → 'Generate a private key'. A .pem file downloads."
   step "Left sidebar → 'Install App' → install on the account that owns ${REPO}, that repository only."
-  warn "Keep the App ID and the .pem handy: stage 6 stores them in your secret store."
+  warn "Keep the App ID and the .pem handy: stage 4 checks they are in your secret store."
   note "This wizard never reads the .pem. After storing it, delete the downloaded copy."
   pause "App $appname created, key generated and installed? Press Enter."
 }
 
 # secret_exists NAME: does the target repository already have an Actions secret of this name?
+# Returns 0 when it exists or when that cannot be told (gh failed): the caller then asks, never overwrites quietly.
 secret_exists() {
-  gh secret list --json name --jq '.[].name' 2>/dev/null | grep -Fxq "$1"
+  local names
+  names="$(gh secret list --json name --jq '.[].name' 2>/dev/null)" || return 0
+  grep -Fxq "$1" <<<"$names"
 }
 
 banner "Claude code-review loop: onboard a repository"
@@ -366,17 +369,10 @@ need INFISICAL_CLAUDE_PATH "Folder for the Claude token (Enter for /claude):" '^
 INFISICAL_CLAUDE_PATH="${INFISICAL_CLAUDE_PATH:-/claude}"
 need INFISICAL_GITHUB_PATH "Folder for the three Apps (Enter for /github):" '^[A-Za-z0-9._/-]*$' "a folder like /github"
 INFISICAL_GITHUB_PATH="${INFISICAL_GITHUB_PATH:-/github}"
+note "The default responder App ($DEFAULT_RESPONDER_LOGIN) belongs to one owner: GitHub App names are unique, so"
+note "anyone else must register their own App and enter its name here."
 need RESPONDER_LOGIN "Responder App login, without [bot] (Enter for $DEFAULT_RESPONDER_LOGIN):" '^[A-Za-z0-9-]*$' "a GitHub App name like ci-review-responder"
 RESPONDER_LOGIN="${RESPONDER_LOGIN:-$DEFAULT_RESPONDER_LOGIN}"
-RESPONDER_ID="$DEFAULT_RESPONDER_ID"
-if [[ "$RESPONDER_LOGIN" != "$DEFAULT_RESPONDER_LOGIN" ]]; then
-  RESPONDER_ID="$(gh api "users/${RESPONDER_LOGIN}%5Bbot%5D" --jq .id 2>/dev/null || true)"
-  if [[ ! "$RESPONDER_ID" =~ ^[0-9]+$ ]]; then
-    note "Could not look up the bot id (the App may not exist yet). Find it later with:"
-    note "  gh api users/${RESPONDER_LOGIN}%5Bbot%5D --jq .id"
-    need RESPONDER_ID "Responder bot user id (digits):" '^[0-9]+$' "digits only"
-  fi
-fi
 
 # ── 3: the three GitHub Apps ─────────────────────────────────────────────
 stage "GitHub Apps"
@@ -387,6 +383,15 @@ else
   for _app in "${APPS[@]}"; do
     app_stage "$_app"
   done
+fi
+# The bot account of an App exists only once the App does, so its id is looked up here, not earlier.
+RESPONDER_ID="$DEFAULT_RESPONDER_ID"
+if [[ "$RESPONDER_LOGIN" != "$DEFAULT_RESPONDER_LOGIN" ]]; then
+  RESPONDER_ID="$(gh api "users/${RESPONDER_LOGIN}%5Bbot%5D" --jq .id 2>/dev/null || true)"
+  if [[ ! "$RESPONDER_ID" =~ ^[0-9]+$ ]]; then
+    note "Could not look up the bot id. Find it with: gh api users/${RESPONDER_LOGIN}%5Bbot%5D --jq .id"
+    need RESPONDER_ID "Responder bot user id (digits):" '^[0-9]+$' "digits only"
+  fi
 fi
 
 # ── 4: store keys and the Claude token ───────────────────────────────────

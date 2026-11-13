@@ -25,7 +25,9 @@ case "$1 $2" in
   "repo view")
     case "$*" in *viewerPermission*) echo "${STUB_PERM:-ADMIN}" ;; esac
     exit 0 ;;
-  "secret list") for n in ${STUB_SECRETS:-}; do echo "$n"; done; exit 0 ;;
+  "secret list")
+    if [ -n "${STUB_LIST_FAIL:-}" ]; then echo "HTTP 500" >&2; exit 1; fi
+    for n in ${STUB_SECRETS:-}; do echo "$n"; done; exit 0 ;;
   "secret set")
     cat > "$STUB_DIR/stdin.$3"
     if [ -n "${STUB_SET_FAIL:-}" ]; then echo "HTTP 403: Resource not accessible" >&2; exit 1; fi
@@ -33,7 +35,7 @@ case "$1 $2" in
   "variable set") exit 0 ;;
 esac
 case "$*" in
-  *%5Bbot%5D*) echo 4242 ;;
+  *%5Bbot%5D*) if [ -n "${STUB_BOT_MISSING:-}" ]; then echo "HTTP 404" >&2; exit 1; fi; echo 4242 ;;
   api\ users/*) echo User ;;
 esac
 exit 0
@@ -73,7 +75,16 @@ class Run:
         for f in self.dir.iterdir():
             f.chmod(0o755)
 
-    def go(self, answers: list[str], *, secrets: str = "", set_fail: bool = False, perm: str = "ADMIN"):
+    def go(
+        self,
+        answers: list[str],
+        *,
+        secrets: str = "",
+        set_fail: bool = False,
+        perm: str = "ADMIN",
+        list_fail: bool = False,
+        bot_missing: bool = False,
+    ):
         env = {k: v for k, v in os.environ.items() if k not in ("SHELLOPTS", "GH_REPO")}
         env.update(
             PATH=f"{self.dir.as_posix()}{os.pathsep}{env['PATH']}",
@@ -84,6 +95,10 @@ class Run:
         )
         if set_fail:
             env["STUB_SET_FAIL"] = "1"
+        if list_fail:
+            env["STUB_LIST_FAIL"] = "1"
+        if bot_missing:
+            env["STUB_BOT_MISSING"] = "1"
         return run_wizard(["bash", str(WIZARD)], answers, env)
 
     def calls(self) -> str:
@@ -98,7 +113,7 @@ class Run:
         return self.target / ".github" / "workflows" / "claude-code-review.yml"
 
 
-def answers(run: Run, *, installed="y", responder="", overwrite_secrets=None, files=(), enable="y"):
+def answers(run: Run, *, installed="y", responder="", overwrite_secrets=None, files=(), enable="y", bot_id=None):
     """The prompts in order. `files` are the answers to the 'exists. Overwrite?' prompts."""
     a = [
         "",  # banner
@@ -114,6 +129,8 @@ def answers(run: Run, *, installed="y", responder="", overwrite_secrets=None, fi
     ]
     if installed != "y":
         a += [""] * 3  # one pause per App
+    if bot_id is not None:
+        a.append(bot_id)  # asked only when the bot id lookup fails, after the Apps stage
     a += [""]  # all seven secrets exist
     a += [CLIENT_ID, CLIENT_SECRET]
     if overwrite_secrets is not None:
@@ -157,7 +174,7 @@ def test_every_gh_call_targets_the_named_repository(run):
 
 
 def test_existing_secrets_are_not_overwritten_without_a_yes(run):
-    proc = run.go(answers(run, overwrite_secrets="n", enable="n"), secrets="INFISICAL_CLIENT_ID OTHER")
+    proc = run.go(answers(run, overwrite_secrets="n", enable="y"), secrets="INFISICAL_CLIENT_ID OTHER")
     assert proc.returncode == 0, proc.stderr
     assert "gh secret set" not in run.calls()
     assert "gh variable set" not in run.calls()  # not enabled after skipping the secrets
@@ -237,6 +254,8 @@ def test_a_non_admin_login_is_warned_and_can_stop(run):
     proc = run.go(["", "o/r", "n"], perm="READ")
     assert proc.returncode == 1
     assert "not an admin" in proc.stdout
+    assert "Infisical base URL" not in proc.stdout  # stopped there, not ten prompts later
+    assert "too many" not in proc.stdout
     assert "gh secret set" not in run.calls()
 
 
@@ -252,3 +271,23 @@ def test_inherited_xtrace_does_not_print_the_pasted_secrets(run):
         },
     )
     assert CLIENT_SECRET not in env_proc.stdout + env_proc.stderr
+
+
+def test_a_new_owner_can_create_their_responder_app_before_its_bot_id_exists(run):
+    """The bot account exists only after the App does: the id is asked after the Apps stage, not before."""
+    proc = run.go(
+        answers(run, installed="n", responder="acme-responder", bot_id="777"),
+        bot_missing=True,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "any unique name" in proc.stdout  # the reviewer and orchestrator names are free
+    doc = yaml.safe_load(run.caller.read_text(encoding="utf-8"))
+    assert doc["jobs"]["review"]["with"]["responder-bot-id"] == "777"
+    assert doc["jobs"]["review"]["with"]["responder-bot-login"] == "acme-responder"
+
+
+def test_when_the_secret_list_fails_the_wizard_asks_instead_of_overwriting(run):
+    proc = run.go(answers(run, overwrite_secrets="n", enable="y"), list_fail=True)
+    assert proc.returncode == 0, proc.stderr
+    assert "gh secret set" not in run.calls()
+    assert "left as they were" in proc.stdout
