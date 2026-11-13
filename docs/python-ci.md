@@ -93,7 +93,7 @@ since the entropy plugins flag SHAs. Use `${{ secrets.NAME }}` instead of a lite
 
 ## Ruff
 
-`configs/ruff-base.toml` pins an explicit rule set (`E4 E7 E9 F BLE S110 S112 ASYNC T20 TRY002`, line
+`configs/ruff-base.toml` pins an explicit rule set (`E4 E7 E9 F BLE S110 S112 ASYNC T20 TRY002 TID251`, line
 length 120, `py313`) instead of ruff's default, which changes between releases. Ruff cannot extend a
 URL, so each repository keeps a byte-identical copy as `ruff-base.toml`, and its own `ruff.toml` does
 `extend = "ruff-base.toml"`.
@@ -104,8 +104,9 @@ URL, so each repository keeps a byte-identical copy as `ruff-base.toml`, and its
 - When the new rules report their first large number, the checker is what is under test: cluster the
   findings, then baseline. Do not silence the rule.
 - Pass `config-ref` and the lint job fails when your copy differs from the pinned upstream file.
-- Organisation-specific rules, such as banning a logging library, are not in the base. Add them in
-  your `ruff.toml`.
+- **Logging:** `TID251` bans `logging`, `logging.handlers`, `logging.config`, `loguru` and `structlog`:
+  every repository logs through the shared logging package. List legacy files in
+  `[lint.extend-per-file-ignores]` with `TID251`, and shrink the list.
 - Keep the ruff version in your dev dependencies equal to the `ruff-pre-commit` `rev`.
 
 ## Changing the base

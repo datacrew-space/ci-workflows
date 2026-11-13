@@ -31,4 +31,15 @@ select = [
     "ASYNC",               # blocking calls inside async functions
     "T20",                 # print(): log through the project logger
     "TRY002",              # raise a named exception, not a bare Exception
+    "TID251",              # banned imports: the logging rule below
 ]
+
+# Organisation rule: all repositories log through the shared logging package, never the standard
+# library or a third-party logger. A repository with legacy files lists them in its ruff.toml under
+# [lint.extend-per-file-ignores] (TID251), a table that may only shrink.
+[lint.flake8-tidy-imports.banned-api]
+"logging".msg = "Log through the organisation's logging package, not the standard library."
+"logging.handlers".msg = "Log through the organisation's logging package, not the standard library."
+"logging.config".msg = "Log through the organisation's logging package, not the standard library."
+"loguru".msg = "Log through the organisation's logging package, not a third-party logger."
+"structlog".msg = "Log through the organisation's logging package, not a third-party logger."

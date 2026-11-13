@@ -131,11 +131,17 @@ def test_precommit_runs_the_expected_hooks():
     assert {"ruff-check", "ruff-format", "actionlint", "detect-secrets", "uv-lock"} <= ids
 
 
-def test_base_configs_have_no_organisation_specific_content():
-    # Public repository: no logger bans, hostnames or private names in the shared base.
+def test_ruff_base_bans_stdlib_and_third_party_loggers():
+    banned = RUFF["lint"]["flake8-tidy-imports"]["banned-api"]
+    assert {"logging", "logging.handlers", "logging.config", "loguru", "structlog"} == set(banned)
+    assert "TID251" in RUFF["lint"]["select"]
+
+
+def test_base_configs_name_no_internal_tools_or_hosts():
+    # Public repository: the ban message must not name a private package, host or repository.
     text = (ROOT / "configs" / "ruff-base.toml").read_text() + (ROOT / "configs" / "python-pre-commit.yaml").read_text()
-    assert "TID251" not in text
     assert "crew-logger" not in text
+    assert "datacrew.space" not in text
 
 
 # --- scaffold -----------------------------------------------------------------------------------
