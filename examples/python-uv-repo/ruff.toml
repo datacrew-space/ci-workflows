@@ -6,7 +6,7 @@ extend = "ruff-base.toml"
 # extend-exclude = ["generated"]
 
 [lint]
-# extend-select = ["I", "UP"]
+# extend-select = ["SIM", "RET"]
 
 # Grandfathered violations. This table may only shrink: fix a file, then delete its line.
 # [lint.extend-per-file-ignores]

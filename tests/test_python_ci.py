@@ -103,7 +103,7 @@ def test_ruff_base_pins_an_explicit_py313_rule_set():
     assert RUFF["line-length"] == 120
     sel = RUFF["lint"]["select"]
     assert "ALL" not in sel
-    assert {"F", "BLE", "T20", "TRY002"} <= set(sel)
+    assert {"F", "BLE", "T20", "TRY002", "I", "UP"} <= set(sel)
 
 
 def test_ruff_base_skips_vendor_even_for_explicitly_passed_files():

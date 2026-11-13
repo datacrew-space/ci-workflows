@@ -5,7 +5,7 @@
 #
 #     extend = "ruff-base.toml"
 #     [lint]
-#     extend-select = ["I"]                  # add rules; never write `select =` (it replaces the base)
+#     extend-select = ["SIM"]                # add rules; never write `select =` (it replaces the base)
 #     [lint.extend-per-file-ignores]         # grandfathered violations, which may only shrink
 #     "legacy/*.py" = ["T20"]
 #
@@ -32,6 +32,8 @@ select = [
     "T20",                 # print(): log through the project logger
     "TRY002",              # raise a named exception, not a bare Exception
     "TID251",              # banned imports: the logging rule below
+    "I",                   # sorted, grouped imports
+    "UP",                  # modern syntax for the target Python version
 ]
 
 # Organisation rule: all repositories log through the shared logging package, never the standard
