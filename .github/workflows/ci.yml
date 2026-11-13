@@ -38,15 +38,15 @@ jobs:
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
           ./actionlint -color
 
-  # BOOTSTRAP ONLY. This calls the pull request's own copy of the workflow with the pull request's own
-  # scripts, so a pull request can edit them and make this job pass without a denylist. It is not a
-  # trustworthy gate, and must not be a required check, until a follow-up PR changes it to
-  #   uses: datacrew-space/ci-workflows/.github/workflows/guards.yml@main
-  #   with: { tooling-ref: main }
-  # (see examples/guards-caller.yml). That form cannot be used before this file exists on main.
+  # The TRUSTED gate: the workflow and the scripts both come from `main`, never from the pull request
+  # being checked, so a PR cannot edit them to pass without a denylist (it cannot read the secret
+  # either on a fork). Changes to the guard scripts themselves are exercised by the `test` job.
+  # `allowed-email-regex` adds the repository owner's own address to the default noreply allowlist:
+  # a squash merge made from the web UI is attributed to that address.
   guards:
-    uses: ./.github/workflows/guards.yml
+    uses: datacrew-space/ci-workflows/.github/workflows/guards.yml@main
     with:
-      tooling-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      tooling-ref: main
+      allowed-email-regex: '(@users\.noreply\.github\.com|^noreply@github\.com|^noreply@anthropic\.com|^jaewilson07@gmail\.com)$'
     secrets:
       PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}

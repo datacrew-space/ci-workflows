@@ -151,15 +151,31 @@ def test_tooling_is_fetched_from_the_input_ref():
     assert fetch in run_lines(s)
 
 
-def test_ci_bootstrap_calls_the_local_copy_and_is_marked_as_such():
-    # BOOTSTRAP: the local copy and the PR head sha mean a PR controls its own gate. Documented in ci.yml.
+OWNER_REGEX = r"(@users\.noreply\.github\.com|^noreply@github\.com|^noreply@anthropic\.com|^jaewilson07@gmail\.com)$"
+
+
+def test_ci_calls_the_trusted_gate_from_main():
+    """The workflow AND the tooling come from main, never from the PR being checked (a PR could
+    otherwise edit its own copy to pass with no denylist). No pull request head sha anywhere."""
     job = load(WF / "ci.yml")["jobs"]["guards"]
     assert job == {
-        "uses": "./.github/workflows/guards.yml",
-        "with": {"tooling-ref": "${{ github.event.pull_request.head.sha || github.sha }}"},
+        "uses": "datacrew-space/ci-workflows/.github/workflows/guards.yml@main",
+        "with": {"tooling-ref": "main", "allowed-email-regex": OWNER_REGEX},
         "secrets": {"PRIVATE_TERMS": "${{ secrets.PRIVATE_TERMS }}"},
     }
-    assert "BOOTSTRAP ONLY" in (WF / "ci.yml").read_text()
+    text = (WF / "ci.yml").read_text()
+    assert "head.sha" not in text
+    assert "BOOTSTRAP" not in text
+
+
+def test_the_owners_regex_accepts_the_default_noreply_forms_and_the_owner_only():
+    import re
+
+    rx = re.compile(OWNER_REGEX, re.IGNORECASE)
+    for ok in ("a@users.noreply.github.com", "noreply@github.com", "noreply@anthropic.com", "jaewilson07@gmail.com"):
+        assert rx.search(ok), ok
+    for bad in ("someone@gmail.com", "jaewilson07@gmail.com.evil.example", "x-jaewilson07@gmail.com", "a@example.org"):
+        assert not rx.search(bad), bad
 
 
 def test_trusted_caller_example_pins_the_workflow_and_the_tooling_to_main():
