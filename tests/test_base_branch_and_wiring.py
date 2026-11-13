@@ -94,3 +94,17 @@ def test_the_agents_are_told_the_base_branch(jobs):
     for job, step_id in (("claude-review", "claude-review"), ("respond", "respond-agent")):
         step = next(s for s in jobs[job]["steps"] if s.get("id") == step_id)
         assert "origin/${{ inputs.base-branch }}" in step["with"]["prompt"], job
+
+
+def test_caller_example_reviews_a_retargeted_stacked_pr():
+    """A PR retargeted to the base branch fires only `edited`; the example must run on it."""
+    import pathlib
+
+    import yaml
+
+    doc = yaml.safe_load(pathlib.Path("examples/caller.yml").read_text(encoding="utf-8"))
+    triggers = doc.get("on", doc.get(True))
+    assert "edited" in triggers["pull_request"]["types"]
+    job_if = doc["jobs"]["review"]["if"]
+    assert "github.event.changes.base" in job_if
+    assert "-edit" in doc["concurrency"]["group"], "title edits must not cancel a running review"

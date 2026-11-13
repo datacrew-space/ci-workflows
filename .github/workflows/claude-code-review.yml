@@ -801,7 +801,8 @@ jobs:
           b64=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 -w0)
           echo "::add-mask::$b64"
           auth="AUTHORIZATION: basic $b64"
-          git -C "$CLEAN" -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=$auth"             push "https://github.com/${REPO}.git" "refs/heads/fix:refs/heads/$BRANCH"
+          git -C "$CLEAN" -c core.hooksPath=/dev/null -c "http.https://github.com/.extraheader=$auth" \
+            push "https://github.com/${REPO}.git" "refs/heads/fix:refs/heads/$BRANCH"
           echo "pushed=true" >> "$GITHUB_OUTPUT"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
           echo "pushed $COUNT commit(s) to $BRANCH" >> "$GITHUB_STEP_SUMMARY"

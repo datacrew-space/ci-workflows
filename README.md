@@ -73,7 +73,9 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 - **Merging while the review is pending.** If your repository auto-merges ready PRs, make the review
   gate part of the required check (for example, call this workflow as a job of your main CI workflow
   and add it to the aggregate job's `needs`; a skipped review then counts as a pass, which is also the
-  rollback). A required status that is never posted blocks every PR.
+  rollback). Keep `edited` in the caller's `types` (see `examples/caller.yml`): a stacked PR that GitHub
+  retargets to the base branch fires only `edited`, and without a run on it the green status from the
+  skipped run would let it merge unreviewed. A required status that is never posted blocks every PR.
 - **One secret per fetch.** Each secret is fetched by name so an agent's environment holds only what
   it needs. The Infisical action is pinned by commit SHA to a version that honours `secret-name`.
 

@@ -257,7 +257,7 @@ def test_review_is_opt_in_and_skips_drafts_and_forks(jobs):
     cond = jobs["claude-review"]["if"]
     # Opt-in is the caller's gate (the example caller), not this workflow's.
     caller = yaml.safe_load(CALLER.read_text(encoding="utf-8"))
-    assert caller["jobs"]["review"]["if"] == "${{ vars.CLAUDE_REVIEW_ENABLED == 'true' }}"
+    assert "vars.CLAUDE_REVIEW_ENABLED == 'true'" in caller["jobs"]["review"]["if"]
     assert "!github.event.pull_request.draft" in cond
     assert "github.event.pull_request.head.repo.full_name == github.repository" in cond
 
