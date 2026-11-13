@@ -94,6 +94,18 @@ on:
         description: Ref (use a commit SHA) of this repository to take the guard, scanner and report scripts from
         type: string
         default: main
+      responder-bot-login:
+        description: >-
+          Login of the responder GitHub App without the [bot] suffix. GitHub App names are unique
+          across GitHub, so an owner other than the default one sets this to their own App.
+        type: string
+        default: ci-review-responder
+      responder-bot-id:
+        description: >-
+          Numeric GitHub user id of the responder App's bot account, used as the commit author
+          (gh api users/<login>%5Bbot%5D --jq .id). Must belong to responder-bot-login.
+        type: string
+        default: "355840606"
       reviewer-agent:
         description: >-
           Path of the reviewer prompt in the calling repository. Read from the BASE branch, not the PR.
@@ -269,7 +281,7 @@ jobs:
           # The responder's push re-triggers this workflow as a bot actor; the action refuses bot
           # actors unless they are listed here. Rounds are capped by the event sender: the review
           # after a responder push is round 2, the last (see the `verdict` step).
-          allowed_bots: "ci-review-responder"
+          allowed_bots: ${{ inputs.responder-bot-login }}
           # Read-only tools plus the gh/git calls a review needs, and writes ONLY under REVIEW_DIR.
           # The git rules have no `*`: Claude Code reads a rule without `*` as one exact command,
           # while `git diff:*` admitted `--output=FILE` and `git fetch:*` admitted `--upload-pack=CMD`
@@ -344,7 +356,7 @@ jobs:
         env:
           AGENT_OUTCOME: ${{ steps.claude-review.outcome }}
           LEAKED: ${{ steps.scan.outputs.leaked }}
-          PRIOR: ${{ github.event.sender.login == 'ci-review-responder[bot]' && '1' || '0' }}
+          PRIOR: ${{ github.event.sender.login == format('{0}[bot]', inputs.responder-bot-login) && '1' || '0' }}
         run: |
           if [ "$LEAKED" = true ]; then
             outcome=tooling-failure
@@ -573,8 +585,8 @@ jobs:
         with:
           claude_code_oauth_token: ${{ env.CLAUDE_CODE_OAUTH_TOKEN }}
           github_token: ${{ steps.agent-token.outputs.token }}
-          bot_name: "ci-review-responder[bot]"
-          bot_id: "355840606"
+          bot_name: ${{ format('{0}[bot]', inputs.responder-bot-login) }}
+          bot_id: ${{ inputs.responder-bot-id }}
           # Edit and commit locally, read the PR. It runs NOTHING of the repository's: no pytest,
           # pre-commit or uvx (each executes code the PR author wrote, as root, on a runner whose
           # container layer outlives the job). CI runs the checks on the pushed commits. It cannot

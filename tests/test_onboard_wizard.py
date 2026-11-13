@@ -68,7 +68,7 @@ def test_every_secret_the_workflow_fetches_is_covered_by_the_wizard():
 
 def test_repo_secrets_set_by_the_wizard_are_the_ones_the_workflow_requires():
     required = set(ON["workflow_call"]["secrets"])
-    set_by_wizard = set(re.findall(r"^set_secret (\w+) ", stages_part(), re.M))
+    set_by_wizard = set(re.findall(r"^\s*set_secret (\w+) ", stages_part(), re.M))
     assert set_by_wizard == required
     caller = yaml.safe_load(CALLER.read_text(encoding="utf-8"))
     passed = set(caller["jobs"]["review"]["secrets"])
@@ -85,14 +85,14 @@ def test_repo_variable_is_the_one_the_caller_gates_on():
 
 def test_variable_is_set_after_both_secrets_and_the_caller_is_written():
     s = stages_part()
-    secrets = [m.start() for m in re.finditer(r"^set_secret ", s, re.M)]
+    secrets = [m.start() for m in re.finditer(r"^\s*set_secret ", s, re.M)]
     var = s.index('set_var "$VARIABLE_NAME"')
     caller = s.index('_write_file "$_dest_caller"')
     assert len(secrets) == 2
     assert max(secrets) < caller < var
     assert s.count("set_var ") == 1
     # and behind a confirmation
-    assert re.search(r'if confirm "Set \$VARIABLE_NAME=true[^\n]*\n\s*set_var', s)
+    assert re.search(r'(if|elif) confirm "Set \$VARIABLE_NAME=true[^\n]*\n\s*set_var', s)
 
 
 def test_folder_defaults_match_the_workflow_inputs():
@@ -100,6 +100,8 @@ def test_folder_defaults_match_the_workflow_inputs():
     assert f"INFISICAL_CLAUDE_PATH:-{inputs['infisical-claude-path']['default']}" in SCRIPT
     assert f"INFISICAL_GITHUB_PATH:-{inputs['infisical-github-path']['default']}" in SCRIPT
     assert f"INFISICAL_ENV_SLUG:-{inputs['infisical-env-slug']['default']}" in SCRIPT
+    assert f'DEFAULT_RESPONDER_LOGIN="{inputs['responder-bot-login']['default']}"' in SCRIPT
+    assert f'DEFAULT_RESPONDER_ID="{inputs['responder-bot-id']['default']}"' in SCRIPT
     # the optional lines the wizard adds to the caller are real workflow inputs
     for name in re.findall(r"\\n {6}(infisical-[a-z-]+): ", SCRIPT):
         assert name in inputs
@@ -175,7 +177,7 @@ def test_secret_values_are_only_ever_passed_to_gh_over_stdin():
             code = line.split("#", 1)[0]
             if f"${name}" not in code and f"${{{name}" not in code:
                 continue
-            assert code.startswith("set_secret "), f"secret value used outside set_secret: {line}"
+            assert code.strip().startswith("set_secret "), f"secret value used outside set_secret: {line}"
     # entered hidden
     assert re.search(r"^need_secret INFISICAL_CLIENT_SECRET ", stages_part(), re.M)
     assert re.search(r"^need_secret INFISICAL_CLIENT_ID ", stages_part(), re.M)

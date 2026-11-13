@@ -7,6 +7,12 @@
 # it. Author the per-step stages below the marker.
 
 set -euo pipefail
+# A pasted secret must never reach a trace, even if the caller ran `bash -x` or exported SHELLOPTS.
+set +x
+if (( BASH_VERSINFO[0] < 4 )); then
+  echo "This wizard needs bash 4 or newer (macOS ships 3.2: brew install bash)." >&2
+  exit 1
+fi
 
 # ──────────────────────────────────────────────────────────────────────────
 # Wizard library: delightful, consistent UX, identical across every wizard.
@@ -27,6 +33,7 @@ ENV_FILE="${ENV_FILE:-.env}"
 WRITTEN_ENV=()    # KEYs written to ENV_FILE this run
 WRITTEN_SECRET=() # secret NAMEs set this run
 SKIPPED=()        # things we couldn't do (e.g. gh missing)
+SECRETS_FAILED=0
 
 # _clear wipes the terminal so only the current step is on screen. No-op when
 # output isn't a terminal, so piped logs stay readable.
@@ -141,16 +148,20 @@ write_env() {
 # set_secret NAME VALUE sets a GitHub Actions repo secret via gh. Falls back
 # to a warning (and records it) if gh is unavailable or unauthenticated.
 set_secret() {
-  local name="$1" value="$2"
+  local name="$1" value="$2" err
   if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
-    if printf '%s' "$value" | gh secret set "$name" >/dev/null 2>&1; then
+    # gh's error text never contains the value (it arrives on stdin), so it is safe to show.
+    if err=$(printf '%s' "$value" | gh secret set "$name" 2>&1 >/dev/null); then
       WRITTEN_SECRET+=("$name")
       printf '  %s✓ set%s GitHub secret %s\n' "$GREEN" "$RESET" "$name"
       return
     fi
+    warn "gh could not set $name: ${err:-no message}"
+  else
+    warn "gh is not ready, so $name was not set"
   fi
   SKIPPED+=("GitHub secret $name (set it manually: gh secret set $name)")
-  warn "skipped GitHub secret $name: gh not ready; set it later"
+  SECRETS_FAILED=1
 }
 
 # set_var NAME VALUE sets a GitHub Actions repo variable (non-secret).
@@ -187,7 +198,7 @@ finish() {
 # Nothing here is specific to one person or host: every coordinate is asked.
 # ──────────────────────────────────────────────────────────────────────────
 
-TOTAL_STAGES=9
+TOTAL_STAGES=7
 
 # Nothing in this wizard is persisted to a dotenv file: the only secrets it handles go straight to
 # `gh secret set` over stdin, and the rest are answers it re-asks on a re-run.
@@ -205,6 +216,11 @@ PH_DOMAIN='<https://your-infisical-host>'
 PH_SLUG='<your-project-slug>'
 
 APPS=(ci-code-reviewer ci-review-responder ci-review-orchestrator)
+# The workflow matches the responder's bot login and uses its numeric id as the commit author, so
+# both are inputs of the caller. Defaults are the workflow's own; GitHub App names are unique on
+# GitHub, so an owner other than the default one registers their own App and enters it here.
+DEFAULT_RESPONDER_LOGIN="ci-review-responder"
+DEFAULT_RESPONDER_ID="355840606"
 CLAUDE_TOKEN_SECRET="CLAUDE_CODE_OAUTH_TOKEN"
 VARIABLE_NAME="CLAUDE_REVIEW_ENABLED"
 
@@ -243,36 +259,44 @@ perm_label() {
 
 # need KEY "Prompt" REGEX "what is valid": ask until the answer matches REGEX.
 need() {
-  local key="$1" prompt="$2" re="$3" hint="$4"
+  local key="$1" prompt="$2" re="$3" hint="$4" tries=0
   while :; do
     ask "$key" "$prompt"
     if [[ "${!key}" =~ $re ]]; then return 0; fi
     warn "not valid. Expected: $hint"
+    # Input that ended (closed stdin) would otherwise loop here forever.
+    (( ++tries < 20 )) || { warn "too many invalid answers, stopping."; exit 1; }
   done
 }
 
 # need_secret KEY "Prompt": hidden entry, re-asked until non-empty. Never echoed.
 need_secret() {
-  local key="$1" prompt="$2"
+  local key="$1" prompt="$2" tries=0
   while :; do
     ask_secret "$key" "$prompt"
     if [[ -n "${!key}" ]]; then return 0; fi
     warn "empty. Paste the value (it is hidden as you type)."
+    (( ++tries < 20 )) || { warn "too many empty answers, stopping."; exit 1; }
   done
 }
 
 # app_stage NAME: create one GitHub App and install it on the target repository.
 app_stage() {
-  local app="$1" perm name access
-  stage "GitHub App: $app"
-  say "$app $(app_role "$app")."
+  local app="$1" perm name access appname="$1"
+  [[ "$app" == ci-review-responder ]] && appname="$RESPONDER_LOGIN"
+  say ""
+  say "App $appname $(app_role "$app")."
   if [[ "$GH_OWNER_KIND" == org ]]; then
     open_url "https://github.com/organizations/${REPO_OWNER}/settings/apps/new"
   else
     open_url "https://github.com/settings/apps/new"
   fi
-  step "GitHub App name: exactly '$app' (the workflow matches the bot login, so a variant breaks it)."
-  note "Names are global on GitHub. If it is taken, create the App under a different owner."
+  if [[ "$app" == ci-review-responder ]]; then
+    step "GitHub App name: exactly '$appname' (the caller's responder-bot-login input is set to it)."
+  else
+    step "GitHub App name: any unique name, for example '$app'. The workflow does not match it."
+  fi
+  note "App names are unique across GitHub. If taken, pick another and re-run (the responder name is asked in stage 2)."
   step "Homepage URL: any URL, for example the target repository's page."
   step "Webhook: untick 'Active'. Leave every account and organization permission at 'No access'."
   step "Repository permissions: set exactly these, and nothing else:"
@@ -287,7 +311,12 @@ app_stage() {
   step "Left sidebar → 'Install App' → install on the account that owns ${REPO}, that repository only."
   warn "Keep the App ID and the .pem handy: stage 6 stores them in your secret store."
   note "This wizard never reads the .pem. After storing it, delete the downloaded copy."
-  pause "App $app created, key generated and installed? Press Enter."
+  pause "App $appname created, key generated and installed? Press Enter."
+}
+
+# secret_exists NAME: does the target repository already have an Actions secret of this name?
+secret_exists() {
+  gh secret list --json name --jq '.[].name' 2>/dev/null | grep -Fxq "$1"
 }
 
 banner "Claude code-review loop: onboard a repository"
@@ -309,6 +338,10 @@ export GH_REPO="$REPO"
 if ! gh repo view "$REPO" >/dev/null 2>&1; then
   warn "gh cannot see $REPO with the current login. Check the name and 'gh auth status'."
   exit 1
+fi
+if [[ "$(gh repo view "$REPO" --json viewerPermission --jq .viewerPermission 2>/dev/null || true)" != ADMIN ]]; then
+  warn "your login is not an admin of $REPO: setting secrets and variables will fail."
+  confirm "Continue anyway?" || exit 1
 fi
 GH_OWNER_KIND=user
 if [[ "$(gh api "users/$REPO_OWNER" --jq .type 2>/dev/null || true)" == Organization ]]; then
@@ -333,17 +366,34 @@ need INFISICAL_CLAUDE_PATH "Folder for the Claude token (Enter for /claude):" '^
 INFISICAL_CLAUDE_PATH="${INFISICAL_CLAUDE_PATH:-/claude}"
 need INFISICAL_GITHUB_PATH "Folder for the three Apps (Enter for /github):" '^[A-Za-z0-9._/-]*$' "a folder like /github"
 INFISICAL_GITHUB_PATH="${INFISICAL_GITHUB_PATH:-/github}"
+need RESPONDER_LOGIN "Responder App login, without [bot] (Enter for $DEFAULT_RESPONDER_LOGIN):" '^[A-Za-z0-9-]*$' "a GitHub App name like ci-review-responder"
+RESPONDER_LOGIN="${RESPONDER_LOGIN:-$DEFAULT_RESPONDER_LOGIN}"
+RESPONDER_ID="$DEFAULT_RESPONDER_ID"
+if [[ "$RESPONDER_LOGIN" != "$DEFAULT_RESPONDER_LOGIN" ]]; then
+  RESPONDER_ID="$(gh api "users/${RESPONDER_LOGIN}%5Bbot%5D" --jq .id 2>/dev/null || true)"
+  if [[ ! "$RESPONDER_ID" =~ ^[0-9]+$ ]]; then
+    note "Could not look up the bot id (the App may not exist yet). Find it later with:"
+    note "  gh api users/${RESPONDER_LOGIN}%5Bbot%5D --jq .id"
+    need RESPONDER_ID "Responder bot user id (digits):" '^[0-9]+$' "digits only"
+  fi
+fi
 
-# ── 3-5: the three GitHub Apps ───────────────────────────────────────────
-for _app in "${APPS[@]}"; do
-  app_stage "$_app"
-done
+# ── 3: the three GitHub Apps ─────────────────────────────────────────────
+stage "GitHub Apps"
+say "The loop uses three GitHub Apps: a reviewer, a responder and an orchestrator."
+if confirm "Are all three already installed on $REPO (for example installed on all your repositories)?"; then
+  note "Skipping App creation. Stage 4 only checks that their credentials are in the secret store."
+else
+  for _app in "${APPS[@]}"; do
+    app_stage "$_app"
+  done
+fi
 
-# ── 6: store keys and the Claude token ───────────────────────────────────
-stage "Store the App credentials and the Claude token"
+# ── 4: store keys and the Claude token ───────────────────────────────────
+stage "App credentials and the Claude token in the secret store"
 open_url "$INFISICAL_DOMAIN"
-say "In project '$INFISICAL_PROJECT_SLUG', environment '$INFISICAL_ENV_SLUG', create these secrets."
-say "Paste each value into Infisical yourself; this wizard never sees them."
+say "In project '$INFISICAL_PROJECT_SLUG', environment '$INFISICAL_ENV_SLUG', these secrets must exist."
+say "Create any that are missing; paste each value into Infisical yourself, this wizard never sees them."
 printf '\n  %sFolder %s%s\n' "$BOLD" "$INFISICAL_GITHUB_PATH" "$RESET"
 for _app in "${APPS[@]}"; do
   _p="$(app_prefix "$_app")"
@@ -353,9 +403,9 @@ done
 printf '\n  %sFolder %s%s\n' "$BOLD" "$INFISICAL_CLAUDE_PATH" "$RESET"
 step "$CLAUDE_TOKEN_SECRET     run 'claude setup-token' in a terminal and paste what it prints"
 note "Create the folders first if they do not exist. Names are case-sensitive and must match exactly."
-pause "All seven secrets stored? Press Enter."
+pause "All seven secrets exist? Press Enter."
 
-# ── 7: machine identity, repo secrets ────────────────────────────────────
+# ── 5: machine identity, repo secrets ────────────────────────────────────
 stage "Machine identity and repository secrets"
 say "CI authenticates to Infisical with a machine identity (Universal Auth). Labels vary by version."
 step "Organization → Access Control → Identities (or Machine Identities) → Create identity."
@@ -366,14 +416,26 @@ step "On the identity's Universal Auth page: copy the Client ID, then 'Add clien
 note "Both values are hidden as you paste, and go to GitHub over stdin. They are not written to disk."
 need_secret INFISICAL_CLIENT_ID "Paste the Client ID:"
 need_secret INFISICAL_CLIENT_SECRET "Paste the Client Secret:"
-set_secret INFISICAL_CLIENT_ID "$INFISICAL_CLIENT_ID"
-set_secret INFISICAL_CLIENT_SECRET "$INFISICAL_CLIENT_SECRET"
+_overwrite_ok=1
+if secret_exists INFISICAL_CLIENT_ID || secret_exists INFISICAL_CLIENT_SECRET; then
+  warn "$REPO already has INFISICAL_CLIENT_ID and/or INFISICAL_CLIENT_SECRET. Other workflows may use them."
+  warn "Overwriting them points those workflows at the new identity, which can read only the folders above."
+  confirm "Overwrite the existing secrets?" || _overwrite_ok=0
+fi
+if (( _overwrite_ok )); then
+  set_secret INFISICAL_CLIENT_ID "$INFISICAL_CLIENT_ID"
+  set_secret INFISICAL_CLIENT_SECRET "$INFISICAL_CLIENT_SECRET"
+else
+  SKIPPED+=("INFISICAL_CLIENT_ID and INFISICAL_CLIENT_SECRET left as they were: confirm the existing identity can read $INFISICAL_GITHUB_PATH and $INFISICAL_CLAUDE_PATH")
+  SECRETS_FAILED=1
+fi
 unset INFISICAL_CLIENT_ID INFISICAL_CLIENT_SECRET
 
-# ── 8: caller workflow and agent prompts ─────────────────────────────────
+# ── 6: caller workflow and agent prompts ─────────────────────────────────
 stage "Caller workflow and agent prompts"
 say "These go into a checkout of $REPO. Commit them on a branch and open a PR; do not push to main."
 need TARGET_DIR "Path to a local checkout of $REPO:" '^.+$' "a directory"
+TARGET_DIR="${TARGET_DIR/#\~/$HOME}"
 if [[ ! -e "$TARGET_DIR/.git" ]]; then
   warn "$TARGET_DIR is not a git checkout."
   exit 1
@@ -389,13 +451,19 @@ _slug_block="$INFISICAL_PROJECT_SLUG"
 [[ "$INFISICAL_ENV_SLUG" != prod ]] && _slug_block+=$'\n      infisical-env-slug: '"$INFISICAL_ENV_SLUG"
 [[ "$INFISICAL_CLAUDE_PATH" != /claude ]] && _slug_block+=$'\n      infisical-claude-path: '"$INFISICAL_CLAUDE_PATH"
 [[ "$INFISICAL_GITHUB_PATH" != /github ]] && _slug_block+=$'\n      infisical-github-path: '"$INFISICAL_GITHUB_PATH"
+if [[ "$RESPONDER_LOGIN" != "$DEFAULT_RESPONDER_LOGIN" ]]; then
+  _slug_block+=$'\n      responder-bot-login: '"$RESPONDER_LOGIN"
+  _slug_block+=$'\n      responder-bot-id: "'"$RESPONDER_ID"'"'
+  # the example's concurrency group names the default responder; follow the input
+  _caller="${_caller//"$DEFAULT_RESPONDER_LOGIN[bot]"/$RESPONDER_LOGIN[bot]}"
+fi
 _caller="${_caller//"$PH_SHA"/$COMMIT_SHA}"
 _caller="${_caller//"$PH_DOMAIN"/$INFISICAL_DOMAIN}"
 _caller="${_caller//"$PH_SLUG"/$_slug_block}"
 
 _dest_caller="$TARGET_DIR/.github/workflows/claude-code-review.yml"
 _dest_agents="$TARGET_DIR/.agents/agents"
-# _write_file DEST SRC ("-" reads stdin). Refuses to overwrite without a yes.
+# _write_file DEST SRC (a file). Refuses to overwrite without a yes.
 _write_file() {
   local dest="$1" src="$2"
   if [[ -e "$dest" ]] && ! confirm "$dest exists. Overwrite?"; then
@@ -403,10 +471,14 @@ _write_file() {
     return 0
   fi
   mkdir -p "$(dirname "$dest")"
-  if [[ "$src" == - ]]; then cat >"$dest"; else cp "$src" "$dest"; fi
+  cp "$src" "$dest"
   printf '  %s✓ wrote%s %s\n' "$GREEN" "$RESET" "$dest"
 }
-printf '%s\n' "$_caller" | _write_file "$_dest_caller" -
+# Through a file, not a pipe: a pipe would feed the YAML to confirm's `read` and hide SKIPPED.
+_caller_tmp="$(mktemp)"
+trap 'rm -f "$_caller_tmp"' EXIT
+printf '%s\n' "$_caller" > "$_caller_tmp"
+_write_file "$_dest_caller" "$_caller_tmp"
 _write_file "$_dest_agents/code-reviewer.md" "$EXAMPLES_DIR/code-reviewer.md"
 _write_file "$_dest_agents/review-responder.md" "$EXAMPLES_DIR/review-responder.md"
 if grep -qE '<COMMIT_SHA>|<https://|<your-' "$_dest_caller" 2>/dev/null; then
@@ -417,12 +489,15 @@ note "The sections marked 'CI contract' are read by the workflow; keep them."
 note "The responder only runs if the caller sets push-runs-on (a runner label different from runs-on)."
 pause "Prompts edited, caller reviewed? Press Enter."
 
-# ── 9: switch it on ──────────────────────────────────────────────────────
+# ── 7: switch it on ──────────────────────────────────────────────────────
 stage "Enable the loop"
 say "The caller only runs when the repository variable $VARIABLE_NAME is 'true'."
 say "It is set last, so nothing runs until the secrets and the caller exist."
 note "Merge the caller workflow to the default branch through a normal PR for it to take effect."
-if confirm "Set $VARIABLE_NAME=true on $REPO now?"; then
+if (( SECRETS_FAILED )); then
+  warn "A repository secret was not set, so the loop would fail on its first run. Not enabling it."
+  SKIPPED+=("Variable $VARIABLE_NAME not set: fix the secrets first, then gh variable set $VARIABLE_NAME --body true --repo $REPO")
+elif confirm "Set $VARIABLE_NAME=true on $REPO now?"; then
   set_var "$VARIABLE_NAME" "true"
 else
   SKIPPED+=("Variable $VARIABLE_NAME not set (when ready: gh variable set $VARIABLE_NAME --body true --repo $REPO)")
