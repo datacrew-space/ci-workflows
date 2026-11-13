@@ -151,13 +151,44 @@ def test_tooling_is_fetched_from_the_input_ref():
     assert fetch in run_lines(s)
 
 
-def test_ci_calls_guards_with_head_sha_and_the_secret():
+def test_ci_bootstrap_calls_the_local_copy_and_is_marked_as_such():
+    # BOOTSTRAP: the local copy and the PR head sha mean a PR controls its own gate. Documented in ci.yml.
     job = load(WF / "ci.yml")["jobs"]["guards"]
     assert job == {
         "uses": "./.github/workflows/guards.yml",
         "with": {"tooling-ref": "${{ github.event.pull_request.head.sha || github.sha }}"},
         "secrets": {"PRIVATE_TERMS": "${{ secrets.PRIVATE_TERMS }}"},
     }
+    assert "BOOTSTRAP ONLY" in (WF / "ci.yml").read_text()
+
+
+def test_trusted_caller_example_pins_the_workflow_and_the_tooling_to_main():
+    """The intended form of ci.yml once the workflow exists on main (follow-up PR)."""
+    job = load(ROOT / "examples" / "guards-caller.yml")["jobs"]["guards"]
+    assert job == {
+        "uses": "datacrew-space/ci-workflows/.github/workflows/guards.yml@main",
+        "with": {"tooling-ref": "main"},
+        "secrets": {"PRIVATE_TERMS": "${{ secrets.PRIVATE_TERMS }}"},
+    }
+
+
+def test_empty_secret_fails_the_workflow_closed_by_itself():
+    lines = run_lines(step(GUARDS, "Private terms"))
+    i = lines.index('if [ -z "$PRIVATE_TERMS" ]; then')
+    assert lines[i + 2] == "exit 1" and lines[i + 3] == "fi"
+
+
+def test_pull_request_target_is_unsupported():
+    lines = run_lines(step(GUARDS, "Choose the scan range"))
+    assert "pull_request | pull_request_target)" not in lines
+    i = lines.index("pull_request_target)")
+    assert lines[i + 2] == "exit 1"
+
+
+def test_pre_commit_is_pinned_and_hooks_declare_a_minimum_version():
+    assert "python -m pip install pre-commit==4.3.0" in run_lines(step(GUARDS, "Install pre-commit"))
+    for h in yaml.safe_load((ROOT / ".pre-commit-hooks.yaml").read_text()):
+        assert h["minimum_pre_commit_version"] == "3.2.0"
 
 
 def test_history_workflow_is_weekly_manual_and_scans_all_history():

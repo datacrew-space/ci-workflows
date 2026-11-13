@@ -18,7 +18,7 @@ allowed="${ALLOWED_EMAIL_REGEX:-(@users\.noreply\.github\.com|^noreply@github\.c
 mode="${1:-}"
 arg="${2:-}"
 
-ok() { printf '%s\n' "$1" | tr 'A-Z' 'a-z' | grep -Eq "$allowed"; }
+ok() { printf '%s\n' "$1" | grep -Eiq "$allowed"; }
 
 # An invalid ALLOWED_EMAIL_REGEX must not silently allow or refuse everything.
 printf 'x\n' | grep -Eq "$allowed" > /dev/null 2>&1

@@ -13,7 +13,7 @@ hooks, and in CI as a reusable workflow.
 ## Install the hooks
 
 ```bash
-pip install pre-commit   # or: uv tool install pre-commit
+pip install pre-commit==4.3.0   # or: uv tool install pre-commit==4.3.0
 pre-commit install --hook-type pre-commit --hook-type commit-msg
 ```
 
@@ -29,7 +29,9 @@ it guards. The scripts read it from, in order:
 3. `~/.config/private-terms.txt`.
 
 Line format: one POSIX extended regular expression per line, matched case-insensitively. Blank lines
-and lines starting with `#` are ignored. Use `(^|[^a-z0-9])name([^a-z0-9]|$)` to match a whole word
+and lines starting with `#` are ignored. Backslash escapes are kept as written. Case-insensitivity
+is guaranteed for ASCII letters only; non-ASCII letters are folded only where the system `awk`
+does it (gawk in a UTF-8 locale does, mawk does not), so list both spellings of a non-ASCII term. Use `(^|[^a-z0-9])name([^a-z0-9]|$)` to match a whole word
 (`\b` is not POSIX). An invalid pattern fails the check instead of silently matching nothing.
 
 With no denylist, a developer machine skips the check with a warning. CI passes `--require`, so a
@@ -40,7 +42,13 @@ missing denylist fails closed.
 CI logs of a public repository are public. A report that quoted the matched term, line, path or
 address would leak it a second time. The scripts name only the short commit sha, the file and line,
 and the number of the denylist entry (or which email field failed). To find the match, open that
-file and line and compare it with your own denylist.
+file and line and compare it with your own denylist. Be aware that this still tells a reader of the
+public log which lines and entry numbers matched, so public text can be correlated with entry
+numbers; the entries themselves are never shown. awk's own stderr is discarded for the same reason.
+
+Not scanned: branch and tag names, and a term split across two lines. In `--range` mode a term added
+in a merge commit and removed again by a later commit of the same range is not seen (only commits
+and the final net diff are); `--all-history` checks every merge against its first parent.
 
 ## Adopt the guards in another repository
 
@@ -56,23 +64,33 @@ repos:
       - id: commit-identity
 ```
 
-CI, a workflow that calls the reusable one:
+CI, a workflow that calls the reusable one (see `examples/guards-caller.yml`):
 
 ```yaml
 jobs:
   guards:
-    uses: datacrew-space/ci-workflows/.github/workflows/guards.yml@<commit-sha>
+    uses: datacrew-space/ci-workflows/.github/workflows/guards.yml@main
     with:
-      tooling-ref: <commit-sha>   # same commit as above
+      tooling-ref: main
     secrets:
       PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
 ```
 
 Inputs: `tooling-ref` (default `main`), `allowed-email-regex` (default: GitHub noreply and the Claude
-co-author address), `all-history` (scan every commit; also used on schedule and manual runs). Create
-the `PRIVATE_TERMS` repository secret from your denylist. Pull requests from forks receive no
-secrets, so they fail closed with a clear message; that is intended.
+co-author address; matched case-insensitively), `all-history` (scan every commit; also used on
+schedule and manual runs). Create the `PRIVATE_TERMS` repository secret from your denylist. A missing
+secret fails the job closed, and so do pull requests from forks, which receive no secrets; that is
+intended. `pull_request_target` is not supported and fails the job.
 
-The scripts and config come from `tooling-ref`, never from the repository under test, so a pull
-request cannot weaken the gate that checks it. This repository runs a weekly full-history scan as
-well (`guards-history.yml`).
+### Trust: who controls the scripts
+
+The scripts and config are read from `tooling-ref`, not from the checkout under test. That protects
+the gate only when the caller pins BOTH the `uses:` ref and `tooling-ref` to a trusted ref such as the
+base branch. A caller that uses a local `./.github/workflows/guards.yml` or passes a pull request's
+head sha runs the pull request's own scripts, so the pull request can make the check pass without a
+denylist. Such a caller is a bootstrap, not a gate, and must not be a required check.
+
+This repository's own `ci.yml` is in that bootstrap state until a follow-up PR switches it to the
+`@main` form above (that form cannot work before the workflow exists on `main`). Until then, do not
+make `guards` a required check. The weekly `guards-history.yml` run executes on the default branch and
+scans the full history.

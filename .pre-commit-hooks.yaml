@@ -3,6 +3,7 @@
   name: private-terms (staged changes)
   entry: scripts/check-private-terms.sh --staged
   language: script
+  minimum_pre_commit_version: 3.2.0
   pass_filenames: false
   always_run: true
   stages: [pre-commit]
@@ -10,11 +11,13 @@
   name: private-terms (commit message)
   entry: scripts/check-private-terms.sh --message
   language: script
+  minimum_pre_commit_version: 3.2.0
   stages: [commit-msg]
 - id: commit-identity
   name: commit-identity
   entry: scripts/check-commit-identity.sh --identity
   language: script
+  minimum_pre_commit_version: 3.2.0
   pass_filenames: false
   always_run: true
   stages: [pre-commit]
