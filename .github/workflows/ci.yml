@@ -37,3 +37,10 @@ jobs:
         run: |
           bash <(curl -fsSL https://raw.githubusercontent.com/rhysd/actionlint/v1.7.7/scripts/download-actionlint.bash) 1.7.7
           ./actionlint -color
+
+  guards:
+    uses: ./.github/workflows/guards.yml
+    with:
+      tooling-ref: ${{ github.event.pull_request.head.sha || github.sha }}
+    secrets:
+      PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}

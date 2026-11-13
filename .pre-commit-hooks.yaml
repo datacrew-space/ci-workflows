@@ -1,0 +1,20 @@
+# Hooks other repositories can use from their own .pre-commit-config.yaml. See docs/guards.md.
+- id: private-terms
+  name: private-terms (staged changes)
+  entry: scripts/check-private-terms.sh --staged
+  language: script
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]
+- id: private-terms-message
+  name: private-terms (commit message)
+  entry: scripts/check-private-terms.sh --message
+  language: script
+  stages: [commit-msg]
+- id: commit-identity
+  name: commit-identity
+  entry: scripts/check-commit-identity.sh --identity
+  language: script
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]

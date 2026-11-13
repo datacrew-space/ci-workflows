@@ -1,0 +1,121 @@
+name: Public-repo guards (reusable)
+
+# Stops private information (private names, personal emails, tokens) from landing in a public
+# repository. Call it from a thin workflow; see docs/guards.md. Scripts and config come from THIS
+# repository at `tooling-ref`, never from the repository under test, so a PR cannot weaken the gate.
+# CI logs of a public repository are public: no step prints a matched term, path or address.
+
+on:
+  workflow_call:
+    inputs:
+      tooling-ref:
+        description: Ref of datacrew-space/ci-workflows that supplies the scripts and config.
+        type: string
+        default: main
+      allowed-email-regex:
+        description: Allowed commit email regex (POSIX ERE). Empty uses the script default.
+        type: string
+        default: ""
+      all-history:
+        description: Scan every commit instead of only the new ones.
+        type: boolean
+        default: false
+    secrets:
+      PRIVATE_TERMS:
+        description: The private-terms denylist, one regex per line. Missing means the check fails closed.
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out the repository under test
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # actions/checkout refuses a path outside the workspace, so fetch the tooling by hand. The
+      # repository is public: no credentials are needed or sent.
+      - name: Fetch the guard tooling
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          git init -q "$RUNNER_TEMP/ci-tooling"
+          git -C "$RUNNER_TEMP/ci-tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$RUNNER_TEMP/ci-tooling" checkout -q FETCH_HEAD
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Install pre-commit
+        run: python -m pip install pre-commit
+
+      - name: Secret scanners
+        run: pre-commit run --all-files --config "$RUNNER_TEMP/ci-tooling/configs/guards-pre-commit.yaml"
+
+      - name: Choose the scan range
+        id: range
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          ALL_HISTORY: ${{ inputs.all-history }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PR_HEAD: ${{ github.event.pull_request.head.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+          PUSH_SHA: ${{ github.sha }}
+        run: |
+          set -eu
+          mode=all
+          range=""
+          if [ "$ALL_HISTORY" != "true" ]; then
+            case "$EVENT_NAME" in
+              pull_request | pull_request_target)
+                mode=range
+                range="${PR_BASE}..${PR_HEAD}"
+                ;;
+              push)
+                if [ -n "$PUSH_BEFORE" ] && [ "${PUSH_BEFORE//0/}" != "" ]; then
+                  mode=range
+                  range="${PUSH_BEFORE}..${PUSH_SHA}"
+                fi
+                ;;
+            esac
+          fi
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "range=$range" >> "$GITHUB_OUTPUT"
+
+      - name: Private terms
+        env:
+          PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
+          MODE: ${{ steps.range.outputs.mode }}
+          RANGE: ${{ steps.range.outputs.range }}
+          TOOLING: ${{ runner.temp }}/ci-tooling
+        run: |
+          if [ -z "$PRIVATE_TERMS" ]; then
+            echo "::error::PRIVATE_TERMS is not available (fork pull requests receive no secrets); failing closed" >&2
+          fi
+          if [ "$MODE" = range ]; then
+            bash "$TOOLING/scripts/check-private-terms.sh" --require --range "$RANGE"
+          else
+            bash "$TOOLING/scripts/check-private-terms.sh" --require --all-history
+          fi
+
+      - name: Commit identity
+        env:
+          ALLOWED_EMAIL_REGEX: ${{ inputs.allowed-email-regex }}
+          MODE: ${{ steps.range.outputs.mode }}
+          RANGE: ${{ steps.range.outputs.range }}
+          TOOLING: ${{ runner.temp }}/ci-tooling
+        run: |
+          if [ -z "$ALLOWED_EMAIL_REGEX" ]; then unset ALLOWED_EMAIL_REGEX; fi
+          if [ "$MODE" = range ]; then
+            bash "$TOOLING/scripts/check-commit-identity.sh" --range "$RANGE"
+          else
+            bash "$TOOLING/scripts/check-commit-identity.sh" --all-history
+          fi
