@@ -36,6 +36,9 @@ jobs:
       tooling-ref: <COMMIT_SHA>
       infisical-domain: <https://your-infisical-host>
       infisical-project-slug: <your-project-slug>
+      # responder-bot-login: my-responder   # only if your responder App is not ci-review-responder
+      # responder-bot-id: "123456"          # that App's bot user id; also change the cancel-in-progress
+      #                                     # line above from ci-review-responder[bot] to it
       # base-branch: main                     # a LITERAL name; PRs on other bases (stacks) are skipped.
       #                                       # Never pass ${{ github.event.pull_request.base.ref }}.
       # protected-paths-extra: |              # globs, one per line, always protected
