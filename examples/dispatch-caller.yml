@@ -38,7 +38,7 @@ jobs:
     with:
       tooling-ref: <COMMIT_SHA>
       # Everything below is optional; the values shown are the defaults.
-      # runs-on: '"ubuntu-latest"'                 # JSON, e.g. '["self-hosted", "linux"]'
+      # runs-on: '"ubuntu-latest"'                 # JSON. GitHub-hosted or EPHEMERAL self-hosted only
       # agent-prompt: .agents/agents/ticket-implementer.md
       # ready-label: ready-for-agent
       # claimed-label: agent-dispatched
@@ -61,6 +61,9 @@ jobs:
       IMPLEMENTER_APP_ID: ${{ secrets.IMPLEMENTER_APP_ID }}
       IMPLEMENTER_APP_PRIVATE_KEY: ${{ secrets.IMPLEMENTER_APP_PRIVATE_KEY }}
       # MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
-      # With secret-source: infisical, pass these two instead of the four above:
+      # With secret-source: infisical, pass these four instead of the three above. The AGENT identity
+      # must be able to read only CLAUDE_CODE_OAUTH_TOKEN (and MCP_TOKEN); the other reads the App key:
+      # INFISICAL_AGENT_CLIENT_ID: ${{ secrets.INFISICAL_AGENT_CLIENT_ID }}
+      # INFISICAL_AGENT_CLIENT_SECRET: ${{ secrets.INFISICAL_AGENT_CLIENT_SECRET }}
       # INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
       # INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}

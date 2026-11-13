@@ -52,6 +52,16 @@ def test_an_issue_with_an_open_blocker_waits():
     assert select([issue(8, blocked_by=("CLOSED", "OPEN"))]) == []
 
 
+def test_blockers_beyond_the_returned_page_count_as_open():
+    """totalCount larger than the nodes returned: the hidden blockers are not provably closed."""
+    paged = issue(8, blocked_by=("CLOSED", "CLOSED"))
+    paged["blockedBy"]["totalCount"] = 3
+    assert select([paged]) == []
+    complete = issue(9, blocked_by=("CLOSED", "CLOSED"))
+    complete["blockedBy"]["totalCount"] = 2
+    assert select([complete]) == [9]
+
+
 def test_an_issue_without_the_ready_label_is_not_dispatched():
     assert select([issue(5, labels=("bug",))]) == []
 

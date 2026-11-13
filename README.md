@@ -80,8 +80,8 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 
 1. Create a GitHub App installed on the repository with: contents write, pull requests write, issues
    read, checks/actions/statuses read. Not `workflows`: GitHub then refuses a push that edits workflow
-   files. Store `IMPLEMENTER_APP_ID` and `IMPLEMENTER_APP_PRIVATE_KEY` as repository secrets, plus
-   `CLAUDE_CODE_OAUTH_TOKEN`.
+   files. Store `IMPLEMENTER_APP_ID` and `IMPLEMENTER_APP_PRIVATE_KEY` as repository secrets (only the
+   `publish` job reads them), plus `CLAUDE_CODE_OAUTH_TOKEN`.
 2. Copy [`examples/dispatch-caller.yml`](examples/dispatch-caller.yml) to
    `.github/workflows/dispatch-ready-issues.yml` and pin `uses:` and `tooling-ref` to one commit SHA.
 3. Copy [`examples/ticket-implementer.md`](examples/ticket-implementer.md) to
@@ -100,22 +100,37 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 **Security model.** The job boundary is the boundary.
 
 - `select` runs no agent. It picks (`scripts/select_dispatchable.py`) and claims.
-- `implement` is the only job with an agent. It holds a read-only app token and no write token; what
-  it writes dies with the job. It hands over a git bundle and the PR text as an artifact.
+- `implement` is the only job with an agent. It holds the job's own read-only `GITHUB_TOKEN` and **no
+  GitHub App key**: an agent that can run code can read the secrets of its own job, so the key lives
+  only in `publish`. With `secret-source: infisical` it uses a separate machine identity
+  (`INFISICAL_AGENT_CLIENT_ID`/`_SECRET`) that can read only the model credential (and `MCP_TOKEN`)
+  under `infisical-claude-path`. Its git rules are exact commands (no `git fetch:*`, which admits
+  `--upload-pack=CMD`), its edits are confined to the workspace, and `.git/` is denied. It hands over a
+  git bundle and the PR text as an artifact.
 - `publish` runs no agent and executes nothing the agent wrote. It rebuilds the branch in a fresh
   repository, judges the diff against the default branch as GitHub reports it now with
-  `scripts/implementer-protected-paths.sh` (NUL-separated paths, fails closed), sanitises the PR text
-  (`scripts/sanitize-pr-text.sh`: no stray `Closes`, no live `@mentions`), then pushes without force
-  and opens the PR with the only write token.
+  `scripts/implementer-protected-paths.sh` (NUL-separated paths, fails closed), refuses a commit message
+  that would close an issue (`scripts/reject-closing-keywords.sh`; a squash merge copies commit messages
+  into its body), sanitises the PR text (`scripts/sanitize-pr-text.sh`: no stray `Closes`, no live
+  `@mentions`), then pushes without force and opens the PR with the only write token. It ignores global
+  git config.
 - `report` runs no agent and makes sure every claimed issue ends with a PR or a human.
-- The agent may not change `.github/`, `.claude/`, agent prompts and skills, `AGENTS.md`/`CLAUDE.md`,
-  lint config, `scripts/check_*`, its own prompt, or anything in `extra-protected-paths`.
+- The agent may not change `.github/`, `.claude/`, agent prompts and skills, `AGENTS.md`/`CLAUDE.md`/
+  `CLAUDE.local.md`/`.mcp.json` at any depth, lint config, `scripts/check_*`, its own prompt, or anything
+  in `extra-protected-paths`.
+- **Runners: GitHub-hosted or ephemeral self-hosted only.** On a persistent runner the agent can leave
+  files behind (`~/.gitconfig`, a binary earlier on `PATH`) for the next job; a persistent runner is not
+  a boundary.
 - Accepted risk: the agent runs your repository's code (your tests) with the OAuth token in its
   environment, as the review loop does. Use a token that can write nothing that matters. If you wire an
   MCP server, give it a read-only identity and list read-only tools only.
 
 **Validated vs unverified.** Validated live on the source repository (run 43355501438): select, claim,
-implement, publish and opening the PR all worked. **Not validated:** a bot-initiated review of the
+implement, publish and opening the PR all worked. **That run used an earlier design** in which the agent
+job minted a read-only App token; this version drops the App key from the agent job (it uses the job's
+own read-only `GITHUB_TOKEN`, commits as `github-actions[bot]`) and tightens the agent's tool list, a
+separate Infisical identity for the agent, commit-message and nested-instruction-file checks. None of
+that has run live. **Not validated:** a bot-initiated review of the
 resulting PR. The generalised inputs in this repository (defaults, `secret-source: github`, `mcp-config`,
 `extra-*`) have only had structural tests (`tests/test_factory_workflows.py`) and no live run, and
 `secret-source: infisical` has not been run for this workflow either. Dry-run on a test repository first.

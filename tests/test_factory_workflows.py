@@ -140,15 +140,39 @@ def test_a_failed_claim_does_not_strand_an_issue(jobs):
 # --- The agent job holds no write power ---------------------------------------------------------------
 
 
-def test_agent_token_is_read_only(jobs):
-    with_ = step(jobs["implement"], "agent-token")["with"]
-    assert with_["permission-contents"] == "read"
-    assert not {k: v for k, v in with_.items() if k.startswith("permission-") and v == "write"}
+def test_the_agent_job_uses_only_its_own_read_only_token(jobs):
+    """No GitHub App is minted in the agent job: an agent that runs code can read a job's secrets."""
+    implement = jobs["implement"]
+    assert implement["permissions"] == {
+        "contents": "read",
+        "issues": "read",
+        "pull-requests": "read",
+        "checks": "read",
+        "actions": "read",
+        "statuses": "read",
+    }
+    assert not any(str(s.get("uses", "")).startswith("actions/create-github-app-token") for s in implement["steps"])
+    assert step(implement, "implement-agent")["with"]["github_token"].startswith("${{ github.token }}")
 
 
-@pytest.mark.parametrize(("job", "step_id"), [("implement", "agent-token"), ("publish", "push-token")])
-def test_every_token_is_scoped_to_this_repository_only(jobs, job, step_id):
-    assert step(jobs[job], step_id)["with"]["repositories"] == "${{ github.event.repository.name }}"
+def test_the_agent_job_never_references_the_app_credentials(jobs):
+    """The key must not be reachable from the agent job in either secret mode (`secrets.X` or Infisical)."""
+    text = yaml.safe_dump(jobs["implement"])
+    for forbidden in ("IMPLEMENTER", "PRIVATE_KEY", "INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET"):
+        assert forbidden not in text, forbidden
+
+
+def test_the_agent_job_uses_its_own_infisical_identity(jobs):
+    fetches = [s for s in jobs["implement"]["steps"] if str(s.get("uses", "")).startswith("Infisical/")]
+    assert fetches
+    for s in fetches:
+        assert s["with"]["client-id"] == "${{ secrets.INFISICAL_AGENT_CLIENT_ID }}"
+        assert s["with"]["client-secret"] == "${{ secrets.INFISICAL_AGENT_CLIENT_SECRET }}"
+        assert s["with"]["secret-path"] == "${{ inputs.infisical-claude-path }}"
+
+
+def test_the_publish_token_is_scoped_to_this_repository_only(jobs):
+    assert step(jobs["publish"], "push-token")["with"]["repositories"] == "${{ github.event.repository.name }}"
 
 
 def test_only_the_publish_job_can_write_contents(jobs):
@@ -171,15 +195,27 @@ def test_the_publish_job_runs_no_agent_and_never_fetches_the_claude_token(jobs):
     assert "CLAUDE_CODE_OAUTH_TOKEN" not in publish
 
 
-def test_the_job_permissions_are_the_default_read_only(jobs):
-    assert jobs["implement"]["permissions"] == {"contents": "read"}
+def test_the_publish_job_ignores_git_config_a_previous_job_left_behind(jobs):
+    env = step(jobs["publish"], "push")["env"]
+    assert env["GIT_CONFIG_GLOBAL"] == "/dev/null"
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1"
+
+
+def test_the_publish_job_permissions_are_the_default_read_only(jobs):
     assert jobs["publish"]["permissions"] == {"contents": "read"}
 
 
-def test_app_keys_are_cleared_before_the_agent_runs(jobs):
-    steps = jobs["implement"]["steps"]
-    agent_index = next(i for i, s in enumerate(steps) if s.get("id") == "implement-agent")
-    assert any("PRIVATE_KEY" in s.get("run", "") for s in steps[:agent_index])
+def test_the_agent_git_rules_are_exact_commands_and_the_git_dir_is_off_limits(jobs):
+    """A bare `git fetch:*` admits --upload-pack=CMD and `git diff:*` admits --output=FILE."""
+    run = step(jobs["implement"], "config")["run"]
+    tools = next(line for line in run.splitlines() if line.lstrip().startswith("tools="))
+    for bare in ("git fetch", "git diff:*", "git log:*", "git show", "git add:*", "git commit:*"):
+        assert bare not in tools, bare
+    assert "Bash(git add -- *)" in tools
+    claude_args = step(jobs["implement"], "implement-agent")["with"]["claude_args"]
+    assert "--disallowedTools" in claude_args
+    assert "Edit(/${{ github.workspace }}/.git/**)" in claude_args
+    assert "Write(/${{ github.workspace }}/.git/**)" in claude_args
 
 
 def test_the_agent_may_not_push_open_a_pr_or_use_the_web_by_default(jobs):

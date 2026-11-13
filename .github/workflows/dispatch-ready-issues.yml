@@ -17,9 +17,11 @@ name: Dispatch ready issues (reusable)
 #
 # Four jobs, and the job boundary is the security boundary:
 #   select     no agent. Picks and claims. Default token (issues: write).
-#   implement  THE AGENT. Read-only app token, no write token anywhere in the job. Everything it can
-#              write (env files, PATH, .git config) dies with the job. It hands over only a git bundle
-#              and the PR text, as a run artifact.
+#   implement  THE AGENT. The job's own read-only GITHUB_TOKEN and nothing else: no GitHub App key,
+#              no write token, and (with Infisical) only a separate identity that can read the model
+#              credential. Everything it can write (env files, PATH, .git config) dies with the job,
+#              on an EPHEMERAL runner (see below). It hands over only a git bundle and the PR text,
+#              as a run artifact.
 #   publish    NO AGENT. Never runs anything the agent wrote. Rebuilds the branch in a fresh repository
 #              from the bundle, judges it against the default branch as GitHub reports it now, then
 #              pushes and opens the PR with a write token that only exists here.
@@ -33,11 +35,16 @@ name: Dispatch ready issues (reusable)
 #   CLAUDE_CODE_OAUTH_TOKEN       the agent's model credential
 #   IMPLEMENTER_APP_ID, IMPLEMENTER_APP_PRIVATE_KEY
 #                                 a GitHub App installed on the repository. Permissions: contents
-#                                 write, pull requests write, issues read, checks/actions/statuses
-#                                 read. NOT `workflows`: GitHub then rejects a push that edits
-#                                 .github/workflows/. The agent job mints a read-only token from it.
+#                                 write, pull requests write, issues read. NOT `workflows`: GitHub
+#                                 then rejects a push that edits .github/workflows/. ONLY the
+#                                 `publish` job reads these; the agent job never sees them, because
+#                                 an agent that can run code can read a job's secrets.
 #   MCP_TOKEN                     optional, only with `mcp-config`: the bearer token for that server.
 #                                 Give it a read-only identity, never an admin one.
+# With `secret-source: infisical` the agent job uses its OWN machine identity
+# (INFISICAL_AGENT_CLIENT_ID / INFISICAL_AGENT_CLIENT_SECRET) that can read only
+# CLAUDE_CODE_OAUTH_TOKEN and MCP_TOKEN under `infisical-claude-path`; `publish` uses
+# INFISICAL_CLIENT_ID / INFISICAL_CLIENT_SECRET, which can read the App credentials.
 # The PR is opened with the app token on purpose: a PR opened with GITHUB_TOKEN starts no workflow, so
 # your CI and review would never run. Add the app's bot login to `allowed-bots` of the review workflow
 # (README) or its review fails before starting.
@@ -45,6 +52,11 @@ name: Dispatch ready issues (reusable)
 # Known, accepted: the agent runs repository code (your tests) with the OAuth token in its
 # environment, the same exposure claude-code-review.yml has. That token must not be able to write
 # anything that matters.
+#
+# Runners: use GitHub-hosted runners or EPHEMERAL self-hosted ones (a fresh machine per job). On a
+# persistent runner the agent can leave files behind (~/.gitconfig, a binary earlier on PATH) that the
+# next job, including `publish` with its write token, would pick up; `publish` ignores global git
+# config, but a persistent runner is still not a boundary.
 
 on:
   workflow_call:
@@ -143,6 +155,10 @@ on:
         required: false
       INFISICAL_CLIENT_SECRET:
         required: false
+      INFISICAL_AGENT_CLIENT_ID:
+        required: false
+      INFISICAL_AGENT_CLIENT_SECRET:
+        required: false
 
 permissions:
   contents: read
@@ -225,8 +241,15 @@ jobs:
       max-parallel: 1
       matrix:
         issue: ${{ fromJSON(needs.select.outputs.numbers) }}
+    # The agent's whole GitHub power: read the repo, issues and CI with the job's own token. It cannot
+    # push, open a PR, comment or label. No GitHub App key is used in this job.
     permissions:
       contents: read
+      issues: read
+      pull-requests: read
+      checks: read
+      actions: read
+      statuses: read
     steps:
       # The default branch tip at dispatch time. No stored credentials in .git/config: this job
       # never pushes.
@@ -249,85 +272,33 @@ jobs:
           mkdir -p "$RUNNER_TEMP/out"
 
       # Optional secret source. With `secret-source: github` none of these run and the values come from
-      # the caller's secrets (`secrets.X || env.X` below).
+      # the caller's secrets (`secrets.X || env.X` below). The agent job uses its OWN Infisical identity,
+      # which can read only the model credential (and the MCP token), never the GitHub App key.
       - name: Fetch the Claude Code OAuth token from Infisical
         if: ${{ inputs.secret-source == 'infisical' }}
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: "universal"
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          client-id: ${{ secrets.INFISICAL_AGENT_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_AGENT_CLIENT_SECRET }}
           domain: ${{ inputs.infisical-domain }}
           project-slug: ${{ inputs.infisical-project-slug }}
           env-slug: ${{ inputs.infisical-env-slug }}
           secret-path: ${{ inputs.infisical-claude-path }}
           secret-name: "CLAUDE_CODE_OAUTH_TOKEN"
 
-      - name: Fetch IMPLEMENTER_APP_ID from Infisical
-        if: ${{ inputs.secret-source == 'infisical' }}
-        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
-        with:
-          method: "universal"
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          domain: ${{ inputs.infisical-domain }}
-          project-slug: ${{ inputs.infisical-project-slug }}
-          env-slug: ${{ inputs.infisical-env-slug }}
-          secret-path: ${{ inputs.infisical-github-path }}
-          secret-name: "IMPLEMENTER_APP_ID"
-
-      - name: Fetch IMPLEMENTER_APP_PRIVATE_KEY from Infisical
-        if: ${{ inputs.secret-source == 'infisical' }}
-        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
-        with:
-          method: "universal"
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
-          domain: ${{ inputs.infisical-domain }}
-          project-slug: ${{ inputs.infisical-project-slug }}
-          env-slug: ${{ inputs.infisical-env-slug }}
-          secret-path: ${{ inputs.infisical-github-path }}
-          secret-name: "IMPLEMENTER_APP_PRIVATE_KEY"
-
       - name: Fetch MCP_TOKEN from Infisical
         if: ${{ inputs.secret-source == 'infisical' && inputs.mcp-config != '' }}
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
         with:
           method: "universal"
-          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
-          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          client-id: ${{ secrets.INFISICAL_AGENT_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_AGENT_CLIENT_SECRET }}
           domain: ${{ inputs.infisical-domain }}
           project-slug: ${{ inputs.infisical-project-slug }}
           env-slug: ${{ inputs.infisical-env-slug }}
-          secret-path: ${{ inputs.infisical-github-path }}
+          secret-path: ${{ inputs.infisical-claude-path }}
           secret-name: "MCP_TOKEN"
-
-      # The agent's token: it reads the repo, issues and CI. It cannot push or open a PR.
-      - name: Mint the implementer agent token
-        id: agent-token
-        uses: actions/create-github-app-token@v2.1.4
-        with:
-          app-id: ${{ secrets.IMPLEMENTER_APP_ID || env.IMPLEMENTER_APP_ID }}
-          private-key: ${{ secrets.IMPLEMENTER_APP_PRIVATE_KEY || env.IMPLEMENTER_APP_PRIVATE_KEY }}
-          repositories: ${{ github.event.repository.name }}
-          permission-contents: read
-          permission-issues: read
-          permission-pull-requests: read
-          permission-checks: read
-          permission-actions: read
-          permission-statuses: read
-
-      - name: Drop the app credentials from the job environment
-        run: |
-          for name in $(compgen -e | grep -E '_(PRIVATE_KEY|APP_ID)$'); do echo "$name=" >> "$GITHUB_ENV"; done
-
-      # The agent's commits carry the app's bot identity. The id is looked up, not hardcoded.
-      - name: Look up the bot identity
-        id: bot
-        env:
-          GH_TOKEN: ${{ steps.agent-token.outputs.token }}
-          APP_SLUG: ${{ steps.agent-token.outputs.app-slug }}
-        run: echo "id=$(gh api "users/${APP_SLUG}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
 
       # Builds the tool list and the optional MCP config from caller inputs, passed through the
       # environment (never spliced into the script). The token is NOT in the file: Claude Code expands
@@ -341,7 +312,11 @@ jobs:
         run: |
           # Base list: edit and commit locally, read the ticket and CI. No push and no PR (a separate job
           # does both), no merge, no label or comment changes, no web tools unless the caller adds them.
-          tools="Read,Grep,Glob,Edit,Write,Bash(git add:*),Bash(git commit:*),Bash(git diff:*),Bash(git log:*),Bash(git show:*),Bash(git status:*),Bash(git fetch:*),Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr checks:*)"
+          # The git rules are exact commands (or `git add -- *` / `git commit -m *`): a bare `git fetch:*`
+          # admits --upload-pack=CMD and `git diff:*` admits --output=FILE, both of which run or write
+          # outside the repo. Edits are confined to the workspace and the output folder, and .git is
+          # denied below, so the agent cannot plant a hook.
+          tools="Read,Grep,Glob,Edit(/${GITHUB_WORKSPACE}/**),Write(/${GITHUB_WORKSPACE}/**),Edit(/${RUNNER_TEMP}/out/**),Write(/${RUNNER_TEMP}/out/**),Bash(git add -- *),Bash(git commit -m *),Bash(git status),Bash(git status --short),Bash(git diff),Bash(git diff --stat),Bash(git diff --cached),Bash(git log --oneline -n 20),Bash(gh issue view:*),Bash(gh pr view:*),Bash(gh pr checks:*)"
           args="--strict-mcp-config" # no MCP server except the one configured below, if any
           if [ -n "$MCP_CONFIG" ]; then
             printf '%s' "$MCP_CONFIG" > "$RUNNER_TEMP/mcp.json"
@@ -371,14 +346,17 @@ jobs:
           MCP_TOKEN: ${{ secrets.MCP_TOKEN || env.MCP_TOKEN }}
         with:
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN || env.CLAUDE_CODE_OAUTH_TOKEN }}
-          github_token: ${{ steps.agent-token.outputs.token }}
-          bot_name: "${{ steps.agent-token.outputs.app-slug }}[bot]"
-          bot_id: ${{ steps.bot.outputs.id }}
+          github_token: ${{ github.token }} # read-only: see this job's `permissions`
+          # Commits carry the Actions bot identity (a public constant). The pushed commits keep it; the
+          # PR is opened by the implementer App in `publish`.
+          bot_name: "github-actions[bot]"
+          bot_id: "41898282"
           # --permission-mode default: anything not on the list is denied (the action's default, `auto`,
           # lets a classifier approve calls outside it).
           claude_args: >-
             --permission-mode default ${{ steps.config.outputs.args }}
             --allowedTools "${{ steps.config.outputs.tools }}"
+            --disallowedTools "Edit(/${{ github.workspace }}/.git/**),Write(/${{ github.workspace }}/.git/**),Read(//proc/**),Read(//root/**),Read(//etc/**),Read(//actions-runner/**),Read(/${{ runner.temp }}/_runner_file_commands/**),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(less:*),Bash(more:*),Bash(env:*),Bash(printenv:*),Bash(strings:*),Bash(base64:*),Bash(xxd:*),Bash(od:*)"
           prompt: |
             Act as the implementer agent defined in ${{ inputs.agent-prompt }} and follow it exactly.
             Implement issue ${{ github.repository }}/issues/${{ matrix.issue }}. You are on a new branch created from the
@@ -491,6 +469,9 @@ jobs:
           REPO: ${{ github.repository }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           EXTRA_PROTECTED_PATHS: ${{ inputs.agent-prompt }} ${{ inputs.extra-protected-paths }}
+          # Ignore any global or system git config a previous job left on a reused machine.
+          GIT_CONFIG_GLOBAL: /dev/null
+          GIT_CONFIG_NOSYSTEM: "1"
         run: |
           # The issue title, the bundle and the PR text are untrusted: they only ever appear quoted
           # or in a file. The app-token action masks the raw token only; mask its base64 form too.
@@ -542,6 +523,18 @@ jobs:
             exit 1
           fi
 
+          # Commit messages are untrusted too: GitHub closes issues named in them when they reach the
+          # default branch, and a squash merge copies them into its body. Only the PR body's one
+          # `Closes` may close anything.
+          msgs=$(git -C "$clean" log --format=%B refs/heads/base..refs/heads/work) || {
+            echo "::error::could not read the agent's commit messages; refusing to push"
+            exit 1
+          }
+          if ! printf '%s\n' "$msgs" | bash ci-tooling/scripts/reject-closing-keywords.sh; then
+            echo "::error::a commit message would close an issue (listed above); refusing to push"
+            exit 1
+          fi
+
           git -C "$clean" -c core.hooksPath=/dev/null -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth" \
             push "$url" "refs/heads/work:refs/heads/$branch"
 
@@ -585,6 +578,7 @@ jobs:
             --description "A person has to look at this" > /dev/null 2>&1 || true
           who="a maintainer"
           [ "$MENTION" = "true" ] && who="@${OWNER}"
+          failed=0
           for n in $(echo "$NUMBERS" | tr -d '[] ' | tr ',' ' '); do
             found=$(gh pr list --repo "$REPO" --state all --limit 100 --json headRefName \
               --jq "[.[] | select(.headRefName | startswith(\"agent/issue-${n}-${GITHUB_RUN_ID}-\"))] | length")
@@ -593,6 +587,14 @@ jobs:
               continue
             fi
             echo "#$n: no PR; handed to a human" >> "$GITHUB_STEP_SUMMARY"
-            gh issue edit "$n" --repo "$REPO" --remove-label "$CLAIMED_LABEL" --add-label "$NEEDS_HUMAN_LABEL" > /dev/null
-            gh issue comment "$n" --repo "$REPO" --body "**Needs a human**, ${who}: the agent opened no PR for this issue ([run]($RUN_URL)). Remove \`${NEEDS_HUMAN_LABEL}\` to dispatch it again."
+            # One failed call must not strand the issues after it with the claimed label forever:
+            # keep going, then fail the job at the end so the failure is visible.
+            if ! gh issue edit "$n" --repo "$REPO" --remove-label "$CLAIMED_LABEL" --add-label "$NEEDS_HUMAN_LABEL" > /dev/null; then
+              echo "::error::could not relabel #$n"
+              failed=1
+              continue
+            fi
+            gh issue comment "$n" --repo "$REPO" --body "**Needs a human**, ${who}: the agent opened no PR for this issue ([run]($RUN_URL)). Remove \`${NEEDS_HUMAN_LABEL}\` to dispatch it again." \
+              || { echo "::error::could not comment on #$n"; failed=1; }
           done
+          exit "$failed"

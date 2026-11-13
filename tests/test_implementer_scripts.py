@@ -17,6 +17,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 PROTECTED = SCRIPTS / "implementer-protected-paths.sh"
 SANITIZE = SCRIPTS / "sanitize-pr-text.sh"
+REJECT_KEYWORDS = SCRIPTS / "reject-closing-keywords.sh"
 
 
 def run(script: Path, data: bytes) -> subprocess.CompletedProcess[bytes]:
@@ -43,6 +44,13 @@ def nul(*paths: str) -> bytes:
         ".pre-commit-config.yaml",
         "ruff.toml",
         ".secrets.baseline",
+        "CLAUDE.local.md",
+        ".mcp.json",
+        # instruction files at any depth: Claude Code loads a nested CLAUDE.md
+        "docs/AGENTS.md",
+        "sub/pkg/CLAUDE.md",
+        "pkg/CLAUDE.local.md",
+        "tools/.mcp.json",
     ],
 )
 def test_a_file_that_grades_the_agent_is_refused_and_named(path):
@@ -63,12 +71,20 @@ def test_a_file_that_grades_the_agent_is_refused_and_named(path):
         "uv.lock",
         ".github-notes/readme.md",
         "scripts/checker.py",
-        "docs/AGENTS.md",
+        "docs/agents-guide.md",
+        "docs/mcp.json.md",
     ],
 )
 def test_ordinary_files_pass(path):
     result = run(PROTECTED, nul(path))
     assert (result.returncode, result.stdout) == (0, b"")
+
+
+def test_a_final_record_without_a_trailing_nul_is_still_judged():
+    """`read -d ''` returns non-zero on the last record when no NUL ends it; it must not be dropped."""
+    result = run(PROTECTED, b"docs/x\0.github/w.yml")
+    assert result.returncode == 1
+    assert result.stdout.decode().strip() == ".github/w.yml"
 
 
 def test_nothing_changed_passes():
@@ -135,6 +151,31 @@ def test_a_real_git_diff_of_a_non_ascii_name_is_refused(tmp_path):
     assert run(PROTECTED, diff).returncode == 1
 
 
+def test_a_real_git_rename_out_of_a_protected_path_is_refused(tmp_path):
+    """--no-renames: with rename detection git lists only the destination, hiding the move out of .github/."""
+    clean_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+    def git(*args: str) -> subprocess.CompletedProcess[bytes]:
+        return subprocess.run(["git", "-C", str(tmp_path), *args], capture_output=True, check=True, env=clean_env)
+
+    git("init", "-q")
+    toplevel = git("rev-parse", "--show-toplevel").stdout.decode().strip()
+    assert Path(toplevel).resolve() == tmp_path.resolve(), f"git is not operating on the scratch repo: {toplevel}"
+    git("config", "user.email", "t@example.com")
+    git("config", "user.name", "t")
+    (tmp_path / ".github" / "workflows").mkdir(parents=True)
+    (tmp_path / ".github" / "workflows" / "ci.yml").write_text("on: push\n" * 20, encoding="utf-8")
+    git("add", "-A")
+    git("commit", "-q", "-m", "base")
+    git("branch", "base")
+    (tmp_path / "docs").mkdir()
+    git("mv", ".github/workflows/ci.yml", "docs/ci.yml")
+    git("commit", "-q", "-m", "agent")
+    diff = git("diff", "-z", "--no-renames", "--name-only", "base...HEAD").stdout
+    assert b".github/workflows/ci.yml" in diff
+    assert run(PROTECTED, diff).returncode == 1
+
+
 # --- sanitize-pr-text.sh -----------------------------------------------------------------------
 
 
@@ -175,6 +216,62 @@ def test_an_email_and_an_already_quoted_name_are_left_alone():
 
 def test_empty_text_stays_empty():
     assert sanitize("") == ""
+
+
+@pytest.mark.parametrize(
+    "text",
+    [
+        "`@someone please look\n",  # an unclosed backtick must not make the mention look quoted
+        "`` `@someone\n",
+        "`a` `@someone\n",
+    ],
+)
+def test_a_crafted_backtick_cannot_hide_a_mention(text):
+    out = sanitize(text)
+    assert "`@someone`" in out
+    assert "@someone" not in out.replace("`@someone`", "")
+
+
+# --- reject-closing-keywords.sh ----------------------------------------------------------------------
+
+
+def rejects(message: str) -> bool:
+    return run(REJECT_KEYWORDS, message.encode("utf-8")).returncode == 1
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Fixes #99",
+        "closes: #12",
+        "RESOLVED #4",
+        "fix owner/repo#5",
+        "Resolves https://github.com/octocat/hello-world/issues/9",
+        "agent work\n\nCloses #7\n",
+    ],
+)
+def test_a_commit_message_that_would_close_an_issue_is_rejected(line):
+    assert rejects(line)
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "Refs #12",
+        "See #12 for context",
+        "Closed the loop on the fixture",
+        "A fix for the timer",
+        "prefix #3 handling",
+        "",
+    ],
+)
+def test_ordinary_commit_messages_are_accepted(line):
+    assert not rejects(line)
+
+
+def test_an_offending_line_is_named_on_stdout():
+    out = run(REJECT_KEYWORDS, b"ok\nfixes #99\n").stdout.decode()
+    assert out.strip() == "fixes #99"
 
 
 def test_extra_protected_paths_from_the_environment_are_refused_too():

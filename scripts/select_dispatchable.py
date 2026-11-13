@@ -42,7 +42,13 @@ def _label_names(item: dict) -> set[str]:
 
 def _all_blockers_closed(item: dict) -> bool:
     try:
-        return all(blocker["state"] == "CLOSED" for blocker in item["blockedBy"]["nodes"])
+        blocked_by = item["blockedBy"]
+        nodes = blocked_by["nodes"]
+        # A page that holds fewer blockers than the issue has hides the rest: not provably unblocked.
+        total = blocked_by.get("totalCount")
+        if isinstance(total, int) and total > len(nodes):
+            return False
+        return all(blocker["state"] == "CLOSED" for blocker in nodes)
     except (KeyError, TypeError) as err:
         raise DispatchInputError(f"issue {item.get('number')}: blockedBy.nodes[].state is missing") from err
 

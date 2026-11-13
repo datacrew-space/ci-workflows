@@ -25,7 +25,7 @@ ALLOWED = {
         "report": {"CI_REVIEW_ORCHESTRATOR_APP_ID", "CI_REVIEW_ORCHESTRATOR_PRIVATE_KEY"},
     },
     "dispatch-ready-issues.yml": {
-        "implement": {"CLAUDE_CODE_OAUTH_TOKEN", "IMPLEMENTER_APP_ID", "IMPLEMENTER_APP_PRIVATE_KEY", "MCP_TOKEN"},
+        "implement": {"CLAUDE_CODE_OAUTH_TOKEN", "MCP_TOKEN"},
         "publish": {"IMPLEMENTER_APP_ID", "IMPLEMENTER_APP_PRIVATE_KEY"},
     },
     "ready-when-green.yml": {
