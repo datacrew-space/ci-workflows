@@ -1,0 +1,47 @@
+# Caller for the shared Python CI. Copy to .github/workflows/ci.yml.
+# Pin `uses:` and `config-ref` to the same reviewed commit SHA of datacrew-space/ci-workflows
+# (replace both <commit-sha> placeholders). A bump is then one reviewed change per repository.
+name: CI
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    uses: datacrew-space/ci-workflows/.github/workflows/python-ci.yml@<commit-sha>
+    with:
+      # GitHub-hosted runners by default. If your account cannot use them (for example billing is
+      # blocked), set the repository variable CI_RUNS_ON to a JSON label such as '["self-hosted","linux"]'.
+      runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}
+      # working-directory: path/to/uv-project   # when pyproject.toml is not at the repository root
+      config-ref: <commit-sha>
+
+  # Add repository-specific jobs here and list them in `needs` below.
+
+  # The single required status check. It lives in the caller, not in the reusable workflow, so the
+  # check name stays `ci-ok`. `if: always()` runs it even when a needed job failed, where a skipped
+  # gate would count as a pass for branch protection. A job skipped on purpose does not fail it.
+  ci-ok:
+    name: ci-ok
+    needs: [python]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Fail if any needed job failed or was cancelled
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        run: |
+          echo "::error::A needed job failed or was cancelled; see the job list above."
+          exit 1
+      - name: Report success
+        run: echo "All needed jobs passed."

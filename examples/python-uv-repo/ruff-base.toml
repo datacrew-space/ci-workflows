@@ -1,0 +1,34 @@
+# Shared ruff base for Python repositories. Canonical copy: configs/ruff-base.toml in
+# datacrew-space/ci-workflows. Ruff cannot extend a URL, so each repository keeps a byte-identical
+# copy as `ruff-base.toml` and the lint job of python-ci.yml checks it against a pinned commit
+# (input `config-ref`). Do not edit the copy. Repository rules go in the repository's `ruff.toml`:
+#
+#     extend = "ruff-base.toml"
+#     [lint]
+#     extend-select = ["I"]                  # add rules; never write `select =` (it replaces the base)
+#     [lint.extend-per-file-ignores]         # grandfathered violations, which may only shrink
+#     "legacy/*.py" = ["T20"]
+#
+# Pinned explicitly: ruff's default rule set grew a lot between releases, and an unpinned config
+# lints whatever the installed binary decides. Widening this list is a deliberate edit.
+line-length = 120
+target-version = "py313"
+
+# Vendored and third-party code is copied byte for byte and must never be rewritten or flagged.
+# `force-exclude` makes ruff honour the exclude list for files that pre-commit passes explicitly.
+# Add more patterns in the repository's ruff.toml with `extend-exclude`.
+force-exclude = true
+extend-exclude = ["**/vendor/**", "**/third_party/**"]
+
+[format]
+exclude = ["*.md"] # ruff >= 0.16 would otherwise format code blocks inside Markdown
+
+[lint]
+select = [
+    "E4", "E7", "E9", "F", # ruff's long-standing default (E722 bare except is in E7)
+    "BLE",                 # blind `except Exception`
+    "S110", "S112",        # try/except/pass and try/except/continue swallow errors
+    "ASYNC",               # blocking calls inside async functions
+    "T20",                 # print(): log through the project logger
+    "TRY002",              # raise a named exception, not a bare Exception
+]

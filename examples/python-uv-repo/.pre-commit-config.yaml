@@ -1,0 +1,61 @@
+# Base pre-commit config for Python repositories. Copy it to `.pre-commit-config.yaml` and edit the
+# marked slots. pre-commit cannot include another file, so this is a scaffold, not an import.
+# Install once per clone:  pre-commit install --hook-type pre-commit --hook-type commit-msg
+# See docs/python-ci.md.
+default_install_hook_types: [pre-commit, commit-msg]
+
+# VENDOR-EXCLUDE SLOT. A top-level `exclude` applies to every hook below. Vendored or third-party
+# code is copied byte for byte (often with a hash manifest), so no hook may rewrite it: end-of-file,
+# whitespace, line-ending and ruff fixers would all change the bytes. Extend the alternation for other
+# directories, e.g. '(^|/)(vendor|third_party|generated)/'.
+exclude: '(^|/)(vendor|third_party)/'
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+        exclude: '\.patch$'
+      - id: end-of-file-fixer
+        exclude: '\.patch$'
+      - id: mixed-line-ending
+        args: [--fix=lf]
+      - id: check-yaml
+      - id: check-json
+      - id: check-toml
+      - id: check-merge-conflict
+      - id: check-case-conflict
+      - id: detect-private-key
+      - id: check-added-large-files
+        args: [--maxkb=1000]
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4 # keep equal to the ruff version in the project's dev dependencies
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/rhysd/actionlint
+    rev: v1.7.12
+    hooks:
+      - id: actionlint
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        # Create the baseline once with:  uvx detect-secrets scan > .secrets.baseline
+        args: [--baseline, .secrets.baseline]
+        exclude: '(^|/)(uv\.lock|\.secrets\.baseline)$'
+  # uv-lock keeps uv.lock in step with pyproject.toml. Delete this block in a repository without a
+  # lockfile. For a project below the root add:  args: [--directory, path/to/project]
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.13.7
+    hooks:
+      - id: uv-lock
+  - repo: local
+    hooks:
+      - id: block-env-files
+        name: Block .env files
+        language: fail
+        entry: env files are blocked, use .env.example instead
+        files: '(^|/)\.env(\.[A-Za-z0-9_-]+)?$'
+        exclude: '\.(example|sample)$'

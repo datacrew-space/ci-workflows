@@ -1,6 +1,14 @@
 # ci-workflows
 
-Reusable GitHub Actions workflows. Today it holds one: the **Claude code-review loop**.
+Reusable GitHub Actions workflows and shared configs. Today it holds:
+
+- the **Claude code-review loop** (below),
+- the public-repo **guards** ([docs/guards.md](docs/guards.md)),
+- **Python CI for uv projects**: a reusable lint and test workflow plus base pre-commit and ruff
+  configs ([docs/python-ci.md](docs/python-ci.md), scaffold in
+  [`examples/python-uv-repo/`](examples/python-uv-repo)).
+
+The code-review loop works like this:
 
 A pull request gets an independent review from a reviewer agent. If the reviewer asks for changes,
 a responder agent may push small fixes to the PR branch, and the PR is reviewed once more. The loop
