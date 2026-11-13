@@ -220,8 +220,11 @@ def test_a_personal_coauthor_trailer_is_refused(repo):
 
 
 def test_identity_mode_checks_the_configured_identity(repo):
-    assert run(IDENT, repo, "--identity", GIT_AUTHOR_EMAIL=NOREPLY, GIT_COMMITTER_EMAIL=NOREPLY).returncode == 0
-    r = run(IDENT, repo, "--identity", GIT_AUTHOR_EMAIL=PERSONAL, GIT_COMMITTER_EMAIL=NOREPLY)
+    names = {"GIT_AUTHOR_NAME": "t", "GIT_COMMITTER_NAME": "t"}  # CI has no user.name; git var needs one
+    assert (
+        run(IDENT, repo, "--identity", GIT_AUTHOR_EMAIL=NOREPLY, GIT_COMMITTER_EMAIL=NOREPLY, **names).returncode == 0
+    )
+    r = run(IDENT, repo, "--identity", GIT_AUTHOR_EMAIL=PERSONAL, GIT_COMMITTER_EMAIL=NOREPLY, **names)
     assert r.returncode == 1 and "example.org" not in out(r)
 
 
