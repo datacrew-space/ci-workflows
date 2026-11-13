@@ -1,0 +1,308 @@
+name: Library release (reusable)
+
+# Releases a library, package or app with semantic versions. release-please reads conventional
+# commits on the main branch, keeps a release pull request open, and when that PR is merged it tags
+# vX.Y.Z and creates the GitHub release. This workflow then verifies the required check is green on
+# the release commit and publishes:
+#   * a Python package to PyPI through trusted publishing (no stored token), and/or
+#   * a container image to GHCR, tagged by version and commit (never a moving tag); the digest is an
+#     output, because consumers pin by digest.
+# Infrastructure repositories do not use this; they use infra-promote.yml.
+#
+# Call it as a job of the repository's own CI workflow, after the required aggregate check
+# (see examples/lib-release-caller.yml). Pin the `uses:` ref and `tooling-ref` to one commit SHA.
+#
+# Safety:
+#   * Nothing publishes unless a release was created AND the required check (default ci-ok) is green
+#     on the release commit, verified through the API by a script from `tooling-ref`.
+#   * The job that runs the build holds no OIDC token; only the upload job can mint one, and it runs
+#     in a named environment (configure required reviewers on it if you want a manual gate).
+#   * Third-party actions are pinned by commit SHA. Workflow permissions start empty and each job
+#     gets only what it needs. Nothing is interpolated into a script; inputs travel through env.
+#   * The only secret is the optional RELEASE_TOKEN (below). Nothing is inherited.
+#
+# RELEASE_TOKEN: pull requests opened with the run's GITHUB_TOKEN do not start other workflows, so
+# the release PR would never run its CI and could not meet a required check. Pass a fine-grained
+# token or a GitHub App token that can write contents and pull requests. Without it the release PR
+# still works if you re-run CI on it by hand.
+#
+# One-time setup per package: register this workflow as a trusted publisher on the package index
+# (owner, repository, workflow file name and the environment name). That is done on the index's site.
+#
+# CI logs of a public repository are public; this workflow prints only shas, tags and image names.
+
+on:
+  workflow_call:
+    inputs:
+      tooling-ref:
+        description: Commit of datacrew-space/ci-workflows that supplies the scripts. Pin it.
+        type: string
+        required: true
+      runs-on:
+        description: JSON runner label. The image job needs a container engine, so use a hosted runner for it.
+        type: string
+        default: '"ubuntu-latest"'
+      release-type:
+        description: release-please release type, for example python or node.
+        type: string
+        default: python
+      config-file:
+        description: Path of a release-please config file in the calling repository. Empty uses release-type.
+        type: string
+        default: ""
+      manifest-file:
+        description: Path of a release-please manifest file in the calling repository. Empty means none.
+        type: string
+        default: ""
+      main-branch:
+        description: Branch that releases are cut from. The release job runs only there.
+        type: string
+        default: main
+      required-check:
+        description: Name of the check that must be green on the release commit.
+        type: string
+        default: ci-ok
+      python-version:
+        description: Python used to build the package.
+        type: string
+        default: "3.13"
+      publish-python:
+        description: Build and publish a Python package.
+        type: boolean
+        default: true
+      pypi-environment:
+        description: Name of the environment the trusted publisher is registered for.
+        type: string
+        default: pypi
+      pypi-repository-url:
+        description: Package index upload URL. Empty means the real index; set the test index to rehearse.
+        type: string
+        default: ""
+      image-name:
+        description: Full lowercase image name starting with ghcr.io/. Empty skips the image job.
+        type: string
+        default: ""
+      dockerfile:
+        description: Dockerfile path for the image.
+        type: string
+        default: Dockerfile
+      context:
+        description: Build context for the image.
+        type: string
+        default: .
+      platforms:
+        description: Target platforms for the image.
+        type: string
+        default: linux/amd64
+    secrets:
+      RELEASE_TOKEN:
+        description: Optional token that opens the release PR so its CI runs. Default is GITHUB_TOKEN.
+        required: false
+    outputs:
+      released:
+        description: "true when this run created a release, otherwise false."
+        value: ${{ jobs.release.outputs.released }}
+      tag:
+        description: The release tag, for example v1.2.3.
+        value: ${{ jobs.release.outputs.tag }}
+      version:
+        description: The release version without the v.
+        value: ${{ jobs.release.outputs.version }}
+      sha:
+        description: The release commit.
+        value: ${{ jobs.release.outputs.sha }}
+      image-digest:
+        description: Digest of the pushed image (empty when no image was built).
+        value: ${{ jobs.image.outputs.digest }}
+
+permissions: {}
+
+jobs:
+  release:
+    if: github.ref_name == inputs.main-branch
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+    outputs:
+      released: ${{ steps.done.outputs.released }}
+      tag: ${{ steps.done.outputs.tag }}
+      version: ${{ steps.done.outputs.version }}
+      sha: ${{ steps.done.outputs.sha }}
+    steps:
+      - name: Release PR and tag
+        id: rp
+        uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_TOKEN || github.token }}
+          release-type: ${{ inputs.release-type }}
+          config-file: ${{ inputs.config-file }}
+          manifest-file: ${{ inputs.manifest-file }}
+
+      # actions/checkout refuses a path outside the workspace, so fetch the tooling by hand. The
+      # repository is public: no credentials are needed or sent.
+      - name: Fetch the release tooling
+        if: steps.rp.outputs.release_created == 'true'
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          git init -q "$RUNNER_TEMP/ci-tooling"
+          git -C "$RUNNER_TEMP/ci-tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$RUNNER_TEMP/ci-tooling" checkout -q FETCH_HEAD
+
+      - name: Set up Python
+        if: steps.rp.outputs.release_created == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # Not yet decided (missing or running) is retried for up to three minutes; red fails at once.
+      - name: Require the check to be green on the release commit
+        if: steps.rp.outputs.release_created == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ steps.rp.outputs.sha }}
+          CHECK: ${{ inputs.required-check }}
+          TOOLING: ${{ runner.temp }}/ci-tooling
+        run: |
+          set -u
+          for attempt in $(seq 1 18); do
+            python "$TOOLING/scripts/check_required_green.py" --fetch "$REPO" "$SHA" "$CHECK"
+            rc=$?
+            if [ "$rc" -ne 2 ]; then exit "$rc"; fi
+            echo "attempt $attempt: not decided yet; waiting"
+            sleep 10
+          done
+          echo "::error::check '$CHECK' was never green on ${SHA:0:7}; not publishing" >&2
+          exit 1
+
+      # Outputs are written only after the check passed, so a red commit hands nothing downstream.
+      - name: Record the release
+        id: done
+        env:
+          RELEASED: ${{ steps.rp.outputs.release_created }}
+          TAG: ${{ steps.rp.outputs.tag_name }}
+          VERSION: ${{ steps.rp.outputs.version }}
+          SHA: ${{ steps.rp.outputs.sha }}
+        run: |
+          set -eu
+          if [ "$RELEASED" = true ]; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            {
+              echo "tag=$TAG"
+              echo "version=$VERSION"
+              echo "sha=$SHA"
+            } >> "$GITHUB_OUTPUT"
+            echo "### Release $TAG (${SHA:0:7})" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+            echo "No release was created by this run." >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  build-python:
+    needs: [release]
+    if: needs.release.outputs.released == 'true' && inputs.publish-python
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ inputs.python-version }}
+      - name: Build the distributions
+        run: |
+          set -eu
+          python -m pip install build==1.2.2
+          python -m build --outdir dist
+      - name: Keep the distributions for the publish job
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+          if-no-files-found: error
+
+  # Separate from the build so the code that ran the build cannot use the OIDC token.
+  publish-python:
+    needs: [release, build-python]
+    if: needs.release.outputs.released == 'true' && inputs.publish-python
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    environment: ${{ inputs.pypi-environment }}
+    permissions:
+      id-token: write
+    steps:
+      - name: Fetch the distributions
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - name: Publish to the package index
+        uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3
+        with:
+          packages-dir: dist/
+          repository-url: ${{ inputs.pypi-repository-url || 'https://upload.pypi.org/legacy/' }}
+
+  image:
+    needs: [release]
+    if: needs.release.outputs.released == 'true' && inputs.image-name != ''
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.release.outputs.sha }}
+          persist-credentials: false
+      - name: Check the image name
+        env:
+          IMAGE: ${{ inputs.image-name }}
+        run: |
+          set -eu
+          case "$IMAGE" in ghcr.io/*) ;; *) echo "::error::image-name must start with ghcr.io/" >&2; exit 1 ;; esac
+          if [ "$IMAGE" != "$(printf '%s' "$IMAGE" | tr 'A-Z' 'a-z')" ]; then
+            echo "::error::image-name must be lowercase" >&2
+            exit 1
+          fi
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: ${{ inputs.context }}
+          file: ${{ inputs.dockerfile }}
+          platforms: ${{ inputs.platforms }}
+          push: true
+          tags: |
+            ${{ inputs.image-name }}:${{ needs.release.outputs.version }}
+            ${{ inputs.image-name }}:${{ needs.release.outputs.sha }}
+          labels: |
+            org.opencontainers.image.revision=${{ needs.release.outputs.sha }}
+            org.opencontainers.image.version=${{ needs.release.outputs.version }}
+      - name: Summary
+        env:
+          IMAGE: ${{ inputs.image-name }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+        run: |
+          {
+            echo "### Image pushed"
+            echo ""
+            echo "Pin consumers to the digest: \`$IMAGE@$DIGEST\`"
+          } >> "$GITHUB_STEP_SUMMARY"

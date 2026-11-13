@@ -1,0 +1,29 @@
+# Add the `release` job to the repository's own CI workflow, after the required aggregate check
+# (`ci-ok` below). It keeps a release PR open from conventional commits; merging that PR tags the
+# release and publishes. Pin BOTH the `uses:` ref and `tooling-ref` to the same reviewed commit SHA
+# of datacrew-space/ci-workflows. See docs/library-release.md.
+#
+# `secrets: inherit` does not cross owners, so pass the token by name.
+jobs:
+  # ... your lint, test and `ci-ok` aggregate jobs ...
+
+  release:
+    needs: ci-ok
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    # A reusable workflow can only narrow the caller's permissions, so grant the union here.
+    permissions:
+      contents: write
+      pull-requests: write
+      checks: read
+      id-token: write
+      packages: write
+    uses: datacrew-space/ci-workflows/.github/workflows/lib-release.yml@<COMMIT_SHA>
+    with:
+      tooling-ref: <COMMIT_SHA>
+      # release-type: python                    # or node, and so on; or use config-file / manifest-file
+      # publish-python: false                   # an app that ships only an image
+      # pypi-environment: pypi                  # the environment registered as the trusted publisher
+      # pypi-repository-url: <test index upload URL>   # rehearse a release without touching the real index
+      # image-name: ghcr.io/<owner>/<image>     # lowercase; set it to also publish a container image
+    # secrets:
+    #   RELEASE_TOKEN: ${{ secrets.RELEASE_TOKEN }}   # so the release PR runs its own CI

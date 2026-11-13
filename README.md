@@ -2,7 +2,8 @@
 
 Reusable GitHub Actions workflows. Today it holds the **Claude code-review loop**, the public-repo
 guards, and **infra-promote** (promote a green commit to a `deploy` branch; see
-[`docs/infra-deploy.md`](docs/infra-deploy.md)).
+[`docs/infra-deploy.md`](docs/infra-deploy.md)) and **lib-release** (semantic-version releases for
+libraries, packages and apps; see [`docs/library-release.md`](docs/library-release.md)).
 
 A pull request gets an independent review from a reviewer agent. If the reviewer asks for changes,
 a responder agent may push small fixes to the PR branch, and the PR is reviewed once more. The loop
