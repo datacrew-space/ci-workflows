@@ -139,7 +139,7 @@ on:
         type: string
         default: /claude
       infisical-github-path:
-        description: Infisical folder holding the implementer app and MCP_TOKEN
+        description: Infisical folder holding the implementer App credentials (read only by the publish job)
         type: string
         default: /github
     secrets:
@@ -329,6 +329,8 @@ jobs:
           fi
           [ -n "$EXTRA_TOOLS" ] && tools="$tools,$EXTRA_TOOLS"
           case "$tools" in *'"'*) echo '::error::tool lists may not contain a double quote'; exit 1;; esac
+          # A newline would add a second `key=value` line to $GITHUB_OUTPUT and could override `args`.
+          case "$tools$args" in *$'\n'*) echo '::error::tool lists and mcp-config paths may not contain a newline'; exit 1;; esac
           echo "args=$args" >> "$GITHUB_OUTPUT"
           echo "tools=$tools" >> "$GITHUB_OUTPUT"
 
@@ -356,7 +358,7 @@ jobs:
           claude_args: >-
             --permission-mode default ${{ steps.config.outputs.args }}
             --allowedTools "${{ steps.config.outputs.tools }}"
-            --disallowedTools "Edit(/${{ github.workspace }}/.git/**),Write(/${{ github.workspace }}/.git/**),Read(//proc/**),Read(//root/**),Read(//etc/**),Read(//actions-runner/**),Read(/${{ runner.temp }}/_runner_file_commands/**),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(less:*),Bash(more:*),Bash(env:*),Bash(printenv:*),Bash(strings:*),Bash(base64:*),Bash(xxd:*),Bash(od:*)"
+            --disallowedTools "Edit(/${{ github.workspace }}/.git/**),Write(/${{ github.workspace }}/.git/**),Edit(/${{ github.workspace }}/.claude/**),Write(/${{ github.workspace }}/.claude/**),Read(//proc/**),Read(//root/**),Read(//etc/**),Read(//actions-runner/**),Read(/${{ runner.temp }}/_runner_file_commands/**),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(less:*),Bash(more:*),Bash(env:*),Bash(printenv:*),Bash(strings:*),Bash(base64:*),Bash(xxd:*),Bash(od:*)"
           prompt: |
             Act as the implementer agent defined in ${{ inputs.agent-prompt }} and follow it exactly.
             Implement issue ${{ github.repository }}/issues/${{ matrix.issue }}. You are on a new branch created from the
@@ -580,8 +582,15 @@ jobs:
           [ "$MENTION" = "true" ] && who="@${OWNER}"
           failed=0
           for n in $(echo "$NUMBERS" | tr -d '[] ' | tr ',' ' '); do
-            found=$(gh pr list --repo "$REPO" --state all --limit 100 --json headRefName \
-              --jq "[.[] | select(.headRefName | startswith(\"agent/issue-${n}-${GITHUB_RUN_ID}-\"))] | length")
+            # `bash -e` would end the step on a failed lookup and strand every later issue as claimed.
+            # If the lookup fails, hand the issue to a human (a PR may exist; a human can tell) and
+            # fail the job at the end so the error is visible.
+            if ! found=$(gh pr list --repo "$REPO" --state all --limit 100 --json headRefName \
+              --jq "[.[] | select(.headRefName | startswith(\"agent/issue-${n}-${GITHUB_RUN_ID}-\"))] | length"); then
+              echo "::error::could not list PRs to check #$n; handing it to a human"
+              found=0
+              failed=1
+            fi
             if [ "$found" -gt 0 ]; then
               echo "#$n: PR opened" >> "$GITHUB_STEP_SUMMARY"
               continue

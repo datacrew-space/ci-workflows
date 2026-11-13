@@ -340,3 +340,88 @@ def test_the_example_caller_passes_only_inputs_and_secrets_the_workflow_declares
     for job in caller_jobs.values():
         assert set(job.get("with", {})) <= set(declared["inputs"])
         assert set(job.get("secrets", {})) <= set(declared["secrets"])
+
+
+def test_no_workflow_level_env_can_hand_a_secret_to_every_job():
+    """A top-level `env:` reaches the agent job too, and the per-job scans would not see it."""
+    for path in (DISPATCH, READY):
+        assert "env" not in load(path), path.name
+
+
+def test_the_agent_cannot_edit_the_project_settings_that_hold_its_permissions(jobs):
+    claude_args = step(jobs["implement"], "implement-agent")["with"]["claude_args"]
+    assert "Edit(/${{ github.workspace }}/.claude/**)" in claude_args
+    assert "Write(/${{ github.workspace }}/.claude/**)" in claude_args
+
+
+def test_the_config_step_rejects_a_newline_that_could_forge_an_output_line(jobs):
+    assert "may not contain a newline" in step(jobs["implement"], "config")["run"]
+
+
+# --- The report job, run for real with a stub `gh` ---------------------------------------------------
+
+GH_STUB = """#!/bin/sh
+echo "$*" >> "$GH_LOG"
+case "$1 $2" in
+  "pr list")
+    if [ "${FAIL_LIST_ONCE:-}" = 1 ] && [ ! -e "$GH_STATE/listed" ]; then touch "$GH_STATE/listed"; exit 1; fi
+    echo 0 ;;
+  "issue edit")
+    if [ "$3" = "${FAIL_EDIT:-none}" ]; then exit 1; fi ;;
+esac
+exit 0
+"""
+
+
+def run_report(tmp_path, **extra_env):
+    import os
+    import subprocess
+
+    script = step_by_name(load(DISPATCH)["jobs"]["report"], "Hand back any issue that has no PR")["run"]
+    (tmp_path / "gh").write_text(GH_STUB, encoding="utf-8", newline="\n")
+    (tmp_path / "gh").chmod(0o755)
+    (tmp_path / "report.sh").write_text(script, encoding="utf-8", newline="\n")
+    log = tmp_path / "gh.log"
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+        "GH_LOG": str(log),
+        "GH_STATE": str(tmp_path),
+        "GH_TOKEN": "x",
+        "REPO": "o/r",
+        "OWNER": "owner",
+        "MENTION": "true",
+        "CLAIMED_LABEL": "agent-dispatched",
+        "NEEDS_HUMAN_LABEL": "needs-human",
+        "NUMBERS": "[5,6]",
+        "RUN_URL": "https://example.invalid/run",
+        "GITHUB_RUN_ID": "1",
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+        **extra_env,
+    }
+    done = subprocess.run(["bash", "-e", str(tmp_path / "report.sh")], capture_output=True, env=env, check=False)
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return done.returncode, calls
+
+
+def handed_over(calls):
+    return [c.split()[2] for c in calls if c.startswith("issue edit")]
+
+
+def test_report_hands_every_pr_less_issue_to_a_human(tmp_path):
+    code, calls = run_report(tmp_path)
+    assert code == 0
+    assert handed_over(calls) == ["5", "6"]
+
+
+def test_report_still_hands_over_the_rest_when_one_pr_lookup_fails(tmp_path):
+    """Under `bash -e` a failed lookup used to end the step and leave every later issue claimed forever."""
+    code, calls = run_report(tmp_path, FAIL_LIST_ONCE="1")
+    assert code == 1  # the failure is visible
+    assert handed_over(calls) == ["5", "6"]
+
+
+def test_report_still_hands_over_the_rest_when_one_relabel_fails(tmp_path):
+    code, calls = run_report(tmp_path, FAIL_EDIT="5")
+    assert code == 1
+    assert handed_over(calls) == ["5", "6"]

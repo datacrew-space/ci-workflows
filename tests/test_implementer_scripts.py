@@ -9,6 +9,7 @@ makes the agent's PR text safe to publish: it can close no issue and notify nobo
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from pathlib import Path
 
@@ -205,12 +206,18 @@ def test_ordinary_references_and_words_survive():
     assert sanitize(text) == text
 
 
-def test_an_at_name_is_wrapped_so_it_notifies_nobody():
-    assert sanitize("ping @octocat and @org/team\n") == "ping `@octocat` and `@org/team`\n"
+ZWSP = "​"
+LIVE_MENTION = re.compile(r"(^|[^A-Za-z0-9_])@[A-Za-z0-9_]")
 
 
-def test_an_email_and_an_already_quoted_name_are_left_alone():
-    text = "mail a@b.com or `@already`\n"
+def test_an_at_name_gets_a_zero_width_space_so_it_notifies_nobody():
+    out = sanitize("ping @octocat and @org/team\n")
+    assert out == f"ping @{ZWSP}octocat and @{ZWSP}org/team\n"
+    assert out.replace(ZWSP, "") == "ping @octocat and @org/team\n"
+
+
+def test_an_email_is_left_alone():
+    text = "mail a@b.com\n"
     assert sanitize(text) == text
 
 
@@ -221,15 +228,22 @@ def test_empty_text_stays_empty():
 @pytest.mark.parametrize(
     "text",
     [
-        "`@someone please look\n",  # an unclosed backtick must not make the mention look quoted
+        "`@someone please look\n",  # an unclosed backtick
         "`` `@someone\n",
         "`a` `@someone\n",
+        "<details>\n@someone here\n</details>\n",  # Markdown is not processed inside an HTML block
+        "&#64;someone\n",  # an HTML character reference decodes to @ in the rendered text
+        "&#x40;someone\n",
+        "&commat;someone\n",
+        "[@someone](https://example.com)\n",
+        "(@someone)\n",
+        "@@someone\n",
+        "@org/someone\n",
     ],
 )
-def test_a_crafted_backtick_cannot_hide_a_mention(text):
-    out = sanitize(text)
-    assert "`@someone`" in out
-    assert "@someone" not in out.replace("`@someone`", "")
+def test_no_input_leaves_a_live_mention(text):
+    """The leftover check uses the same pattern the sanitiser matches, so a miss shows up here."""
+    assert not LIVE_MENTION.search(sanitize(text))
 
 
 # --- reject-closing-keywords.sh ----------------------------------------------------------------------
@@ -248,10 +262,28 @@ def rejects(message: str) -> bool:
         "fix owner/repo#5",
         "Resolves https://github.com/octocat/hello-world/issues/9",
         "agent work\n\nCloses #7\n",
+        "Fixes\t#7",
+        "Close #18",
+        "Fixes #8_",
+        "_Fixes #9_",
+        "**Fixes** #5",
+        "Closes [#19](https://example.com/x)",
+        "Fixed: o/r#17",
     ],
 )
 def test_a_commit_message_that_would_close_an_issue_is_rejected(line):
     assert rejects(line)
+
+
+def test_a_broken_matcher_is_never_read_as_clean(tmp_path):
+    """grep missing or failing must not look like 'no closing keyword': exit 2, not 0."""
+    (tmp_path / "grep").write_text("#!/bin/sh\nexit 2\n", encoding="utf-8")
+    (tmp_path / "grep").chmod(0o755)
+    env = {**os.environ, "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}"}
+    result = subprocess.run(
+        ["bash", str(REJECT_KEYWORDS)], input=b"harmless\n", capture_output=True, env=env, check=False
+    )
+    assert result.returncode == 2
 
 
 @pytest.mark.parametrize(
