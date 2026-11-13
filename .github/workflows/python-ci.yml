@@ -81,6 +81,32 @@ jobs:
         with:
           persist-credentials: false
 
+      # The shared ruff rules are copied into each repository (ruff cannot extend a URL). This step
+      # runs first, so a drifted copy is reported even when a hook fails. It fails when the copy
+      # differs from the pinned upstream version, so it cannot drift unnoticed.
+      - name: Check ruff-base.toml against the pinned upstream copy
+        if: inputs.config-ref != ''
+        env:
+          CONFIG_REF: ${{ inputs.config-ref }}
+          RUFF_BASE_PATH: ${{ inputs.ruff-base-path }}
+        run: |
+          set -eu
+          case "$CONFIG_REF" in
+            *[!0-9a-f]*|"") bad=1 ;;
+            *) if [ "${#CONFIG_REF}" -eq 40 ]; then bad=0; else bad=1; fi ;;
+          esac
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::config-ref must be a full 40-character commit SHA." >&2
+            exit 1
+          fi
+          git init -q "$RUNNER_TEMP/ci-config"
+          git -C "$RUNNER_TEMP/ci-config" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$CONFIG_REF"
+          git -C "$RUNNER_TEMP/ci-config" checkout -q FETCH_HEAD
+          if ! diff -u "$RUNNER_TEMP/ci-config/configs/ruff-base.toml" "$RUFF_BASE_PATH"; then
+            echo "::error::${RUFF_BASE_PATH} differs from configs/ruff-base.toml at the pinned config-ref. Copy the pinned file over it and put repository rules in ruff.toml." >&2
+            exit 1
+          fi
+
       # Keep scratch files off /tmp, which is small or shared on some self-hosted runners.
       - name: Use the runner temp directory for scratch files
         run: |
@@ -94,7 +120,10 @@ jobs:
           # A self-hosted runner keeps its own cache; the hosted cache would only add upload time.
           enable-cache: ${{ runner.environment == 'github-hosted' }}
 
+      # Hosted runners start empty, so the cache pays off there. A self-hosted runner keeps
+      # ~/.cache/pre-commit between runs and would only add upload time.
       - name: Cache pre-commit hook environments
+        if: runner.environment == 'github-hosted'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
@@ -117,23 +146,6 @@ jobs:
         env:
           PRE_COMMIT_VERSION: ${{ inputs.pre-commit-version }}
         run: uvx "pre-commit@${PRE_COMMIT_VERSION}" run --all-files --show-diff-on-failure --color always
-
-      # The shared ruff rules are copied into each repository (ruff cannot extend a URL). This step
-      # fails when the copy differs from the pinned upstream version, so it cannot drift unnoticed.
-      - name: Check ruff-base.toml against the pinned upstream copy
-        if: inputs.config-ref != ''
-        env:
-          CONFIG_REF: ${{ inputs.config-ref }}
-          RUFF_BASE_PATH: ${{ inputs.ruff-base-path }}
-        run: |
-          set -eu
-          git init -q "$RUNNER_TEMP/ci-config"
-          git -C "$RUNNER_TEMP/ci-config" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$CONFIG_REF"
-          git -C "$RUNNER_TEMP/ci-config" checkout -q FETCH_HEAD
-          if ! diff -u "$RUNNER_TEMP/ci-config/configs/ruff-base.toml" "$RUFF_BASE_PATH"; then
-            echo "::error::${RUFF_BASE_PATH} differs from configs/ruff-base.toml at the pinned config-ref. Copy the pinned file over it and put repository rules in ruff.toml." >&2
-            exit 1
-          fi
 
   test:
     name: test
@@ -164,13 +176,18 @@ jobs:
         env:
           SYNC_ARGS: ${{ inputs.sync-args }}
         run: |
-          # shlex splits like a shell would (quotes allowed) without evaluating the value.
-          mapfile -t args < <(uv run --no-project python -c 'import shlex,sys; print(*shlex.split(sys.argv[1]), sep=chr(10))' "$SYNC_ARGS")
+          # shlex splits like a shell would (quotes allowed) without evaluating the value. A value it
+          # cannot parse fails the step: silently dropping arguments would drop `--locked`.
+          parsed=$(uv run --no-project python -c 'import shlex,sys; print(*shlex.split(sys.argv[1]), sep=chr(10))' "$SYNC_ARGS") || { echo "::error::cannot parse the sync-args input" >&2; exit 1; }
+          args=()
+          if [ -n "$parsed" ]; then mapfile -t args <<<"$parsed"; fi
           uv sync "${args[@]}"
 
       - name: Run pytest
         env:
           PYTEST_ARGS: ${{ inputs.pytest-args }}
         run: |
-          mapfile -t args < <(uv run --no-project python -c 'import shlex,sys; print(*shlex.split(sys.argv[1]), sep=chr(10))' "$PYTEST_ARGS")
+          parsed=$(uv run --no-project python -c 'import shlex,sys; print(*shlex.split(sys.argv[1]), sep=chr(10))' "$PYTEST_ARGS") || { echo "::error::cannot parse the pytest-args input" >&2; exit 1; }
+          args=()
+          if [ -n "$parsed" ]; then mapfile -t args <<<"$parsed"; fi
           uv run --no-sync python -m pytest "${args[@]}"

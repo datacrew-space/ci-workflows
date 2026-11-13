@@ -4,8 +4,9 @@
 name: CI
 
 on:
+  # No `branches` filter on pull_request: a stacked PR (whose base is another PR branch) must also get
+  # `ci-ok`, or a required check that never reports blocks it.
   pull_request:
-    branches: [main]
   push:
     branches: [main]
   workflow_dispatch:
@@ -36,12 +37,22 @@ jobs:
     name: ci-ok
     needs: [python]
     if: always()
-    runs-on: ubuntu-latest
+    # The gate must run wherever the other jobs run, or it never starts and blocks every PR.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
     steps:
       - name: Fail if any needed job failed or was cancelled
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+        env:
+          # One line per needed job: add `<name>=<result>` here when you add a job to `needs`.
+          RESULTS: |
+            python=${{ needs.python.result }}
         run: |
-          echo "::error::A needed job failed or was cancelled; see the job list above."
-          exit 1
-      - name: Report success
-        run: echo "All needed jobs passed."
+          failed=""
+          while IFS='=' read -r job result; do
+            case "$result" in failure|cancelled) failed="$failed $job($result)" ;; esac
+          done <<<"$RESULTS"
+          if [ -n "$failed" ]; then
+            echo "::error::Not green:${failed}"
+            exit 1
+          fi
+          echo "All needed jobs passed."

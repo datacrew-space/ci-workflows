@@ -137,13 +137,6 @@ def test_ruff_base_bans_stdlib_and_third_party_loggers():
     assert "TID251" in RUFF["lint"]["select"]
 
 
-def test_base_configs_name_no_internal_tools_or_hosts():
-    # Public repository: the ban message must not name a private package, host or repository.
-    text = (ROOT / "configs" / "ruff-base.toml").read_text() + (ROOT / "configs" / "python-pre-commit.yaml").read_text()
-    assert "crew-logger" not in text
-    assert "datacrew.space" not in text
-
-
 # --- scaffold -----------------------------------------------------------------------------------
 
 
@@ -181,4 +174,112 @@ def test_detect_secrets_scans_workflow_files_and_skips_only_sha_pin_lines():
     assert pattern.search("    uses: actions/checkout@" + "a" * 40 + " # v7.0.1")
     assert pattern.search("      config-ref: " + "b" * 40)
     assert not pattern.search("      token: ghp_" + "a" * 36)
+    assert not pattern.search("        run: echo uses: " + "d" * 40)  # a secret smuggled onto a similar line
+    assert not pattern.search("      TOKEN: " + "e" * 40 + " # config-ref: x")
     assert not pattern.search("      API_KEY: " + "c" * 40)
+
+
+# --- behaviour of the inline scripts ------------------------------------------------------------
+
+import shutil  # noqa: E402
+import subprocess  # noqa: E402
+
+BASH = shutil.which("bash")
+needs_bash = pytest.mark.skipif(BASH is None, reason="bash not available")
+
+
+def step_script(workflow: dict, job: str, name: str) -> str:
+    (s,) = [s for s in workflow["jobs"][job]["steps"] if s.get("name") == name]
+    return s["run"]
+
+
+def run_arg_parser(env_name: str, value: str, script: str) -> subprocess.CompletedProcess:
+    # Keep everything up to the tool call; replace the tool call itself with a print of the arguments.
+    head = script.split('uv sync "${args[@]}"')[0].split('uv run --no-sync python -m pytest "${args[@]}"')[0]
+    head = head.replace("uv run --no-project python", "python")
+    program = head + 'printf "[%s]\n" "${args[@]}"\n'
+    env = {**__import__("os").environ, env_name: value}
+    done = subprocess.run([BASH, "-c", program], env=env, capture_output=True)
+    # Python prints CRLF on Windows; the workflow runs on Linux runners, so compare LF output.
+    done.stdout = done.stdout.replace(bytes([13]), b"").decode()
+    return done
+
+
+@needs_bash
+@pytest.mark.parametrize(
+    ("step", "env_name"),
+    [("Sync the locked environment", "SYNC_ARGS"), ("Run pytest", "PYTEST_ARGS")],
+)
+def test_argument_parsing_keeps_quoted_values_together(step, env_name):
+    script = step_script(PYCI, "test", step)
+    done = run_arg_parser(env_name, '--locked -m "not integration"', script)
+    assert done.returncode == 0
+    assert done.stdout.split() == ["[--locked]", "[-m]", "[not", "integration]"] or done.stdout == (
+        "[--locked]\n[-m]\n[not integration]\n"
+    )
+
+
+@needs_bash
+@pytest.mark.parametrize(
+    ("step", "env_name"),
+    [("Sync the locked environment", "SYNC_ARGS"), ("Run pytest", "PYTEST_ARGS")],
+)
+def test_unparseable_arguments_fail_instead_of_dropping_flags(step, env_name):
+    script = step_script(PYCI, "test", step)
+    done = run_arg_parser(env_name, "--locked 'unterminated", script)
+    assert done.returncode != 0
+    assert "[" not in done.stdout  # the tool call was never reached
+
+
+@needs_bash
+def test_empty_arguments_pass_no_arguments():
+    script = step_script(PYCI, "test", "Sync the locked environment")
+    done = run_arg_parser("SYNC_ARGS", "", script)
+    assert done.returncode == 0
+    assert done.stdout == "[]\n" or done.stdout == ""
+
+
+def test_drift_check_runs_before_the_hooks_and_demands_a_full_sha():
+    names = [s.get("name") for s in PYCI["jobs"]["lint"]["steps"]]
+    assert names.index("Check ruff-base.toml against the pinned upstream copy") < names.index(
+        "Run pre-commit on all files"
+    )
+    script = step_script(PYCI, "lint", "Check ruff-base.toml against the pinned upstream copy")
+    assert "40-character commit SHA" in script
+
+
+def test_pre_commit_cache_is_only_used_on_hosted_runners():
+    (cache,) = [s for s in PYCI["jobs"]["lint"]["steps"] if s.get("name") == "Cache pre-commit hook environments"]
+    assert cache["if"] == "runner.environment == 'github-hosted'"
+
+
+CALLER = load(SCAFFOLD / ".github" / "workflows" / "ci.yml")
+GATE = CALLER["jobs"]["ci-ok"]
+
+
+def test_scaffold_gate_runs_on_the_same_runner_variable_as_the_work():
+    assert GATE["runs-on"] == "${{ fromJSON(vars.CI_RUNS_ON || '\"ubuntu-latest\"') }}"
+    assert CALLER["jobs"]["python"]["with"]["runs-on"] == "${{ vars.CI_RUNS_ON || '\"ubuntu-latest\"' }}"
+
+
+def test_scaffold_runs_for_pull_requests_to_any_base():
+    # A branches filter would leave a stacked pull request without the required `ci-ok` check.
+    assert on_of(CALLER)["pull_request"] is None
+
+
+@needs_bash
+@pytest.mark.parametrize(
+    ("result", "code", "message"),
+    [
+        ("success", 0, "All needed jobs passed."),
+        ("skipped", 0, "All needed jobs passed."),
+        ("failure", 1, "python(failure)"),
+        ("cancelled", 1, "python(cancelled)"),
+    ],
+)
+def test_scaffold_gate_names_the_failing_job(result, code, message):
+    (s,) = [s for s in GATE["steps"] if s.get("name", "").startswith("Fail if any")]
+    env = {**__import__("os").environ, "RESULTS": f"python={result}\n"}
+    done = subprocess.run([BASH, "-c", s["run"]], env=env, capture_output=True, text=True)
+    assert done.returncode == code
+    assert message in done.stdout

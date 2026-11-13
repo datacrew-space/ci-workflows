@@ -50,7 +50,7 @@ repos:
           - --baseline
           - .secrets.baseline
           - --exclude-lines
-          - '(uses|config-ref):.*[0-9a-f]{40}'
+          - '^\s*(-\s*)?(uses|config-ref):\s*\S*[0-9a-f]{40}'
         exclude: '(^|/)(uv\.lock|\.secrets\.baseline)$'
   # uv-lock keeps uv.lock in step with pyproject.toml. Delete this block in a repository without a
   # lockfile. For a project below the root, set BOTH of these on the hook, because the hook's default
