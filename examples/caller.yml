@@ -1,0 +1,39 @@
+name: Claude Code Review
+
+# Copy to .github/workflows/claude-code-review.yml in a repository that should use the review loop.
+# Replace the two <PLACEHOLDERS>: the Infisical coordinates are yours, not this repository's.
+# Pin BOTH the `uses:` ref and `tooling-ref` to the same commit SHA of datacrew-space/ci-workflows,
+# and bump them together in a reviewed PR (Renovate or Dependabot can do it).
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# A review of a superseded head is wasted tokens; review only the latest push. Except the
+# responder's own push: that run waits, so the run that pushed still reaches its `report` job.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: ${{ github.event.sender.login != 'ci-review-responder[bot]' }}
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: write
+  issues: write
+  checks: read
+  actions: read
+
+jobs:
+  review:
+    # Opt-in: set the repository variable CLAUDE_REVIEW_ENABLED=true once the secrets exist.
+    if: ${{ vars.CLAUDE_REVIEW_ENABLED == 'true' }}
+    uses: datacrew-space/ci-workflows/.github/workflows/claude-code-review.yml@<COMMIT_SHA>
+    with:
+      tooling-ref: <COMMIT_SHA>
+      infisical-domain: <https://your-infisical-host>
+      infisical-project-slug: <your-project-slug>
+      # runs-on: '["self-hosted", "linux"]'   # JSON; default is "ubuntu-latest"
+      # push-runs-on: '"ubuntu-latest"'       # JSON; unset disables the responder's push
+    secrets:
+      INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+      INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
