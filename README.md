@@ -41,7 +41,14 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 | `protected-paths-extra` | Extra always-protected paths, one bash glob per line, for files inside otherwise editable directories (auth modules, generated files). Adds to the default-deny guard and can never allow a path |
 | `tooling-ref` | Commit of this repository to take the guard, scanner and report scripts from |
 | `reviewer-agent`, `responder-agent` | Agent prompt paths in the calling repository. They are read from the **base branch**, not from the PR (see design notes). If a file is not on the base yet, the generic template from `tooling-ref` is used, with a warning |
-| `allowed-bots` | Comma-separated logins of every other bot that opens or pushes PRs (see the lesson below). Default empty |
+| `allowed-bots` | Comma-separated logins of every other bot that opens or pushes PRs (see the lesson below). Letters, digits and `-` only; `*` is refused. Default empty |
+
+## Upgrading: the reviewer App needs Issues: read
+
+The reviewer's token now asks for `issues: read`, so the Spec axis can read the issue a PR closes.
+`actions/create-github-app-token` **fails when it asks for a permission the installed App does not have**,
+so an existing `ci-code-reviewer` App must be granted **Issues: read** (and the installation must accept the
+change) before you move a caller to this version. Until then the review job fails at the token step.
 
 ## Lesson learned: `allowed-bots`
 
@@ -56,8 +63,7 @@ bot-initiated review of that PR has not been observed.
 
 ## Factory pieces
 
-Three more pieces, built and exercised in a public tutorial repository (the
-[greenhouse](https://github.com/jaewilson07/greenhouse) project, author: Jae Wilson) and generalised
+Three more pieces, built and exercised in another repository (author: Jae Wilson) and generalised
 here. All share one convention: the caller owns the triggers, secrets are plain GitHub secrets by
 default (Infisical is an option), runners come from a `runs-on` JSON input, and the decision scripts are
 checked out from this repository at `tooling-ref`, never from the repository being worked on.
@@ -65,9 +71,9 @@ checked out from this repository at `tooling-ref`, never from the repository bei
 | Piece | Status |
 |---|---|
 | Issue dispatcher | Partly validated live; see below |
-| Ready when green | **Merged in the source repository but never run live**; unit-tested only |
+| Ready when green | **Never run live**; unit-tested only |
 | Work status script | Unit-tested against canned `gh` output |
-| Claude Code hooks (examples) | Unit-tested; used in interactive sessions in the source repository |
+| Claude Code hooks (examples) | Unit-tested; used in interactive sessions before being ported here |
 
 ### Issue dispatcher (`dispatch-ready-issues.yml`)
 
@@ -91,11 +97,23 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 
 **Inputs** (all optional). `runs-on` (JSON, default `"ubuntu-latest"`), `tooling-ref`, `agent-prompt`
 (default `.agents/agents/ticket-implementer.md`), `ready-label`, `claimed-label`, `needs-human-label`,
-`owner-handle` (empty = repository owner) and `mention-owner`, `dispatch-limit` (default 2),
+`owner-handle` (empty = repository owner) and `mention-owner`, `draft` (default `true`: see below),
+`dispatch-limit` (default 2),
 `setup-command` (for example `uv sync --frozen`), `extra-allowed-tools`, `extra-protected-paths`,
 `mcp-config` and `mcp-allowed-tools` (an MCP server for the agent; **off by default**), and
 `secret-source` (`github` by default, or `infisical` with `infisical-domain`, `infisical-project-slug`,
 `infisical-env-slug`, `infisical-claude-path`, `infisical-github-path`).
+
+**Draft PRs.** The agent's PR opens as a **draft** by default (`draft: true`). In a repository whose
+automation merges any non-draft PR on green CI, "ready" can mean "merged", so an agent-written PR must
+not become ready without a recorded review. A draft is skipped by the review loop until it is marked ready;
+`ready-when-green` (below) is the documented path from draft to ready, once a human or an author adds its
+label. Set `draft: false` only if nothing in your repository merges on green CI alone.
+
+**Concurrency.** Select-and-claim is serialised inside the workflow (one group per repository), so two
+overlapping runs cannot claim the same issue. The example caller's own `concurrency` block uses a different
+group name on purpose, and the two label names in the example callers' `if:` are coupled to the
+`ready-label` and `needs-human-label` inputs: if you rename a label there, rename it in the caller's `if:` too.
 
 **Security model.** The job boundary is the boundary.
 
@@ -116,7 +134,7 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
   git config.
 - `report` runs no agent and makes sure every claimed issue ends with a PR or a human.
 - The agent may not change `.github/`, `.claude/`, agent prompts and skills, `AGENTS.md`/`CLAUDE.md`/
-  `CLAUDE.local.md`/`.mcp.json` at any depth, lint config, `scripts/check_*`, its own prompt, or anything
+  `CLAUDE.local.md`/`.mcp.json` at any depth, lint config, `scripts/check-*` and `scripts/check_*`, all of `.agents/`, its own prompt, or anything
   in `extra-protected-paths`.
 - **Runners: GitHub-hosted or ephemeral self-hosted only.** On a persistent runner the agent can leave
   files behind (`~/.gitconfig`, a binary earlier on `PATH`) for the next job; a persistent runner is not
@@ -125,8 +143,8 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
   environment, as the review loop does. Use a token that can write nothing that matters. If you wire an
   MCP server, give it a read-only identity and list read-only tools only.
 
-**Validated vs unverified.** Validated live on the source repository (run 43355501438): select, claim,
-implement, publish and opening the PR all worked. **That run used an earlier design** in which the agent
+**Validated vs unverified.** An earlier form of this workflow was run live once, in the repository it
+came from: select, claim, implement, publish and opening the PR all worked. **That run used an earlier design** in which the agent
 job minted a read-only App token; this version drops the App key from the agent job (it uses the job's
 own read-only `GITHUB_TOKEN`, commits as `github-actions[bot]`) and tightens the agent's tool list, a
 separate Infisical identity for the agent, commit-message and nested-instruction-file checks. None of
@@ -155,8 +173,7 @@ the job checks out only this tooling repository, never PR code, and no event tex
 app token is needed because a PR marked ready with `GITHUB_TOKEN` would start no workflow. Fork PRs are
 never touched, and a missing or pending `ci-ok` is never read as green.
 
-**Validated vs unverified.** Unit-tested (`tests/test_ready_when_green.py`). **It was merged in the source
-repository but has never run live**, so the trigger wiring, the token scopes and the flip itself are
+**Validated vs unverified.** Unit-tested (`tests/test_ready_when_green.py`). **It has never run live**, so the trigger wiring, the token scopes and the flip itself are
 unverified.
 
 ### Work status (`scripts/work_status.py`)

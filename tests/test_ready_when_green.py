@@ -158,3 +158,14 @@ def test_the_workflow_token_can_read_checks_and_statuses():
     mint = next(s for s in steps if str(s.get("uses", "")).startswith("actions/create-github-app-token"))
     assert mint["with"].get("permission-checks") == "read"
     assert mint["with"].get("permission-statuses") == "read"
+
+
+def test_a_gh_that_cannot_run_reports_the_exception_not_a_guess(monkeypatch, capsys):
+    import ready_when_green
+
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("gh")
+
+    monkeypatch.setattr(ready_when_green.subprocess, "run", boom)
+    assert ready_when_green._run_gh(["pr", "list"]) is None
+    assert "FileNotFoundError" in capsys.readouterr().err

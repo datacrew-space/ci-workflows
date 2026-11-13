@@ -81,7 +81,8 @@ def _run_gh(args: list[str]) -> str | None:
         if first_line:
             sys.stderr.write(f"ready_when_green: gh said: {first_line[0]}\n")
         return None
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as err:
+        sys.stderr.write(f"ready_when_green: could not run gh: {type(err).__name__}: {err}\n")
         return None
     return done.stdout
 

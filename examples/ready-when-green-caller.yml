@@ -26,6 +26,7 @@ jobs:
       ${{ vars.READY_WHEN_GREEN_ENABLED == 'true' &&
       (github.event_name != 'pull_request_target' || github.event.action == 'ready_for_review' || github.event.label.name == 'ready-for-review') &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}
+    # The label name in the `if:` above must match the `ready-label` input.
     uses: datacrew-space/ci-workflows/.github/workflows/ready-when-green.yml@<COMMIT_SHA>
     permissions:
       contents: read

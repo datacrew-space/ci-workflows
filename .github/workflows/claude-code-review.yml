@@ -167,6 +167,17 @@ jobs:
             exit 1
           fi
 
+      # allowed-bots goes into the action's allowed_bots list. Only named bot logins are accepted:
+      # never `*`, which would let any bot start a review.
+      - name: Validate the allowed-bots input
+        env:
+          ALLOWED_BOTS: ${{ inputs.allowed-bots }}
+        run: |
+          if [ -n "$ALLOWED_BOTS" ] && ! [[ "$ALLOWED_BOTS" =~ ^[A-Za-z0-9-]+(,[A-Za-z0-9-]+)*$ ]]; then
+            echo "::error::allowed-bots must be comma-separated bot logins ([A-Za-z0-9-]+), never '*'"
+            exit 1
+          fi
+
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
       - name: Fetch the review-loop tooling
         uses: actions/checkout@v7

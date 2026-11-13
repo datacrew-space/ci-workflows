@@ -284,10 +284,34 @@ def test_the_agents_pr_text_goes_through_the_sanitiser_script(jobs):
     assert 'cat "$RUNNER_TEMP/agent/pr-body.md"' not in run
 
 
-def test_the_pr_links_the_issue_and_is_not_a_draft(jobs):
-    run = step(jobs["publish"], "push")["run"]
-    assert "Closes #%s" in run
-    assert "--draft" not in run, "a draft PR is skipped by the review workflow"
+def test_the_pr_links_the_issue(jobs):
+    assert "Closes #%s" in step(jobs["publish"], "push")["run"]
+
+
+def test_agent_prs_open_as_drafts_unless_the_caller_opts_out(jobs, inputs):
+    """Where automation merges any non-draft PR on green CI, a ready agent PR could merge unreviewed."""
+    assert inputs["draft"]["default"] is True
+    push = step(jobs["publish"], "push")
+    assert push["env"]["DRAFT"] == "${{ inputs.draft }}"
+    assert '"${draft_flag[@]}"' in push["run"]
+    assert '[ "$DRAFT" = "true" ] && draft_flag=(--draft)' in push["run"]
+
+
+def test_the_claim_is_serialised_inside_the_reusable_workflow(jobs):
+    """The guard must not live only in an example caller: two overlapping runs would claim one issue twice."""
+    concurrency = jobs["select"]["concurrency"]
+    assert concurrency["cancel-in-progress"] is False
+    assert "${{ github.repository }}" in concurrency["group"]
+    # a called workflow that reuses its caller's group is cancelled by it
+    caller = yaml.safe_load((EXAMPLES / "dispatch-caller.yml").read_text(encoding="utf-8"))
+    assert concurrency["group"] != caller["concurrency"]["group"]
+
+
+def test_no_workflow_gives_the_agent_a_wildcard_git_rule():
+    """`git fetch:*` admits --upload-pack=CMD and `git diff:*` admits --output=FILE."""
+    wildcard = re.compile(r"Bash\(git [a-z-]+:\*\)")
+    for path in sorted(WF.glob("*.yml")):
+        assert not wildcard.search(path.read_text(encoding="utf-8")), path.name
 
 
 def test_the_branch_name_is_built_from_trusted_values_only(jobs):
@@ -425,3 +449,27 @@ def test_report_still_hands_over_the_rest_when_one_relabel_fails(tmp_path):
     code, calls = run_report(tmp_path, FAIL_EDIT="5")
     assert code == 1
     assert handed_over(calls) == ["5", "6"]
+
+
+# --- The allowed-bots validation in the review workflow, run for real ---------------------------------
+
+
+def run_allowed_bots_check(value: str) -> int:
+    import os
+    import subprocess
+
+    review = load(WF / "claude-code-review.yml")["jobs"]["claude-review"]
+    script = step_by_name(review, "Validate the allowed-bots input")["run"]
+    return subprocess.run(
+        ["bash", "-e", "-c", script], env={**os.environ, "ALLOWED_BOTS": value}, capture_output=True, check=False
+    ).returncode
+
+
+@pytest.mark.parametrize("value", ["", "my-app", "app-one,app-two"])
+def test_named_bot_logins_are_accepted(value):
+    assert run_allowed_bots_check(value) == 0
+
+
+@pytest.mark.parametrize("value", ["*", "app,*", "my app", "a,,b", "app,", "a]b", "x; echo hi"])
+def test_a_wildcard_or_malformed_allowed_bots_is_refused(value):
+    assert run_allowed_bots_check(value) == 1

@@ -35,7 +35,8 @@ LIMIT = 100
 
 # Only closing keywords make a PR own an issue; `Refs #N` is related work (a parent spec, a partial slice).
 ISSUE_LINK = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)", re.IGNORECASE)
-BRANCH_ISSUE = re.compile(r"^[a-z]+/(\d+)-")
+# `<type>/<N>-slug` (feat/12-title) and the dispatcher's `agent/issue-<N>-...`.
+BRANCH_ISSUE = re.compile(r"^(?:[a-z]+/(\d+)-|agent/issue-(\d+)-)")
 
 RunGh = Callable[[list[str]], str | None]
 
@@ -73,7 +74,7 @@ def _linked_issues(pr: dict) -> set[int]:
     found = {int(n) for n in ISSUE_LINK.findall(pr.get("body") or "")}
     branch = BRANCH_ISSUE.match(pr.get("headRefName") or "")
     if branch:
-        found.add(int(branch.group(1)))
+        found.add(int(branch.group(1) or branch.group(2)))
     return found
 
 
@@ -206,7 +207,8 @@ def _run_gh(args: list[str]) -> str | None:
         if first_line:
             sys.stderr.write(f"work_status: gh said: {first_line[0]}\n")
         return None
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError) as err:
+        sys.stderr.write(f"work_status: could not run gh: {type(err).__name__}: {err}\n")
         return None
     return done.stdout
 
@@ -220,7 +222,7 @@ def main(argv: Sequence[str], run_gh: RunGh = _run_gh) -> int:
     try:
         rows = build_rows(run_gh, numbers or None, warn=lambda msg: sys.stderr.write(f"work_status: {msg}\n"))
     except WorkStatusError as err:
-        sys.stderr.write(f"work_status: {err} (is `gh` installed and logged in?)\n")
+        sys.stderr.write(f"work_status: {err}\n")
         return 1
     sys.stdout.write((format_rows(rows) if rows else "No open work found.") + "\n")
     return 0

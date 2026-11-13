@@ -293,3 +293,24 @@ def test_a_failing_gh_shows_what_gh_said(monkeypatch, capsys):
 def test_main_exits_nonzero_and_says_why_when_gh_fails(capsys):
     assert main([], run_gh=gh_with(None, [])) == 1
     assert "gh" in capsys.readouterr().err
+
+
+def test_a_dispatcher_branch_links_its_issue():
+    from work_status import _linked_issues
+
+    assert _linked_issues({"headRefName": "agent/issue-42-123-1", "body": ""}) == {42}
+    assert _linked_issues({"headRefName": "feat/7-title", "body": ""}) == {7}
+    assert _linked_issues({"headRefName": "agent/other", "body": ""}) == set()
+
+
+def test_a_gh_that_cannot_run_reports_the_real_error_not_a_guess(monkeypatch, capsys):
+    import work_status
+
+    def boom(*args, **kwargs):
+        raise FileNotFoundError("gh")
+
+    monkeypatch.setattr(work_status.subprocess, "run", boom)
+    assert work_status._run_gh(["issue", "list"]) is None
+    err = capsys.readouterr().err
+    assert "FileNotFoundError" in err
+    assert "installed" not in err  # no guessed cause

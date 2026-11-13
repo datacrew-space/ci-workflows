@@ -13,7 +13,9 @@ permissions:
   contents: read
 
 # One dispatch at a time. A waiting run is replaced by the newest waiting one, which is fine: every run
-# re-reads all candidates from scratch.
+# re-reads all candidates from scratch. (The reusable workflow also serialises the claim itself, under a
+# different group name; do not reuse that name here.)
+# The label names in the `if:` below must match the `ready-label` and `needs-human-label` inputs.
 concurrency:
   group: dispatch-ready-issues
   cancel-in-progress: false

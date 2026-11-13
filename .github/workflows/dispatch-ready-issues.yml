@@ -93,6 +93,13 @@ on:
         description: Set false to comment without an @mention
         type: boolean
         default: true
+      draft:
+        description: >-
+          Open the agent's PR as a draft (default). A draft is skipped by the review loop until it is marked
+          ready, for example by ready-when-green. Set false only if nothing in your repository merges a
+          non-draft PR on green CI without a recorded review.
+        type: boolean
+        default: true
       dispatch-limit:
         description: Most agents started per run
         type: number
@@ -165,6 +172,13 @@ permissions:
 
 jobs:
   select:
+    # One select-and-claim at a time per repository, so two overlapping runs (a label event and a
+    # sweep, or two callers) cannot both read the queue before either has claimed an issue. The group
+    # name differs from the example caller's own `concurrency` group on purpose: a called workflow that
+    # reuses its caller's group is cancelled by it.
+    concurrency:
+      group: dispatch-select-${{ github.repository }}
+      cancel-in-progress: false
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     outputs:
@@ -474,6 +488,7 @@ jobs:
           # Ignore any global or system git config a previous job left on a reused machine.
           GIT_CONFIG_GLOBAL: /dev/null
           GIT_CONFIG_NOSYSTEM: "1"
+          DRAFT: ${{ inputs.draft }}
         run: |
           # The issue title, the bundle and the PR text are untrusted: they only ever appear quoted
           # or in a file. The app-token action masks the raw token only; mask its base64 form too.
@@ -550,8 +565,10 @@ jobs:
             echo "The agent wrote no PR text; see the run." > "$body"
           fi
           printf '\n\nCloses #%s\n\nOpened by the issue dispatcher ([run](%s)).\n' "$ISSUE" "$RUN_URL" >> "$body"
+          draft_flag=()
+          [ "$DRAFT" = "true" ] && draft_flag=(--draft)
           GH_TOKEN="$PUSH_TOKEN" gh pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$branch" \
-            --title "$title" --body-file "$body"
+            --title "$title" --body-file "$body" "${draft_flag[@]}"
           echo "pushed $count commit(s) to $branch and opened a PR" >> "$GITHUB_STEP_SUMMARY"
 
   # Every dispatched issue ends with a PR or with a human. No agent runs here.

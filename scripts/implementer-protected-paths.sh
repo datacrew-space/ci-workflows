@@ -33,7 +33,7 @@ judge() {
   local path=$1 lower pattern
   lower="${path,,}"
   case "$lower" in
-    .github/* | .agents/agents/* | .agents/skills/* | .claude/* | scripts/check_*) ;;
+    .github/* | .agents/* | .claude/* | scripts/check[-_]*) ;;
     agents.md | claude.md | claude.local.md | .mcp.json) ;;
     */agents.md | */claude.md | */claude.local.md | */.mcp.json) ;;
     .pre-commit-config.yaml | ruff.toml | .secrets.baseline) ;;
