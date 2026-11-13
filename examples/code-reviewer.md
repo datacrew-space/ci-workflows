@@ -24,9 +24,10 @@ to find what the author missed and say so plainly.
 
 ## Process
 
-1. **Pin the fixed point.** For a PR it is the merge-base with the default branch. Only these exact
-   git forms are allowed in CI: `git diff origin/main...HEAD`, `git diff --stat origin/main...HEAD`,
-   `git diff --name-only origin/main...HEAD`, `git log --oneline origin/main..HEAD`. Use `Read` and
+1. **Pin the fixed point.** For a PR it is the merge-base with the base branch (the workflow's
+   `base-branch` input, `main` by default). Only these exact git forms are allowed in CI, with
+   `<base>` being that branch: `git diff origin/<base>...HEAD`, `git diff --stat origin/<base>...HEAD`,
+   `git diff --name-only origin/<base>...HEAD`, `git log --oneline origin/<base>..HEAD`. Use `Read` and
    `Grep` for file contents and `gh pr diff` for per-file diffs. Never run `git fetch`.
 2. **Standards axis.** Check the diff against the repo's instructions and lint config. Do not repeat
    what automated checks already enforce.

@@ -7,6 +7,9 @@ name: Claude Code Review
 
 on:
   pull_request:
+    # A stacked PR that GitHub retargets to the base branch after its parent merges fires `edited`,
+    # not `synchronize`. Add `edited` below if you want such a PR reviewed right away (it also
+    # re-runs the review on title and body edits); otherwise it is reviewed on its next push.
     types: [opened, synchronize, ready_for_review, reopened]
 
 # A review of a superseded head is wasted tokens; review only the latest push. Except the
@@ -32,6 +35,11 @@ jobs:
       tooling-ref: <COMMIT_SHA>
       infisical-domain: <https://your-infisical-host>
       infisical-project-slug: <your-project-slug>
+      # base-branch: main                     # a LITERAL name; PRs on other bases (stacks) are skipped.
+      #                                       # Never pass ${{ github.event.pull_request.base.ref }}.
+      # protected-paths-extra: |              # globs, one per line, always protected
+      #   *auth*.py
+      #   */generated/*
       # runs-on: '["self-hosted", "linux"]'   # JSON; default is "ubuntu-latest"
       # push-runs-on: '"ubuntu-latest"'       # JSON; unset disables the responder's push
     secrets:

@@ -77,6 +77,19 @@ on:
         description: JSON for runs-on of the push job. Must differ from runs-on. Empty disables the responder.
         type: string
         default: ""
+      base-branch:
+        description: >-
+          The branch PRs must target for the loop to run (the reviewer diffs against it). A PR based
+          on any other branch, such as a stacked PR, is skipped: the diff would include its parent's commits.
+        type: string
+        default: main
+      protected-paths-extra:
+        description: >-
+          Extra always-protected paths, one bash glob per line, matched against the whole lower-cased
+          path (`*` crosses `/`). Adds to the built-in default-deny guard; it can never allow a path.
+          Use it for files inside otherwise editable directories, such as auth modules or generated files.
+        type: string
+        default: ""
       tooling-ref:
         description: Ref (use a commit SHA) of this repository to take the guard, scanner and report scripts from
         type: string
@@ -97,7 +110,10 @@ jobs:
   claude-review:
     # Opt-in belongs to the caller (gate the calling job). Not drafts, and never fork PRs: this runs
     # with a token.
-    if: ${{ !github.event.pull_request.draft && github.event.pull_request.head.repo.full_name == github.repository }}
+    if: >-
+      ${{ !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.base.ref == inputs.base-branch }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     # Read by `respond` and `report`: the verdict outcome of this head, and which round it was.
     outputs:
@@ -112,9 +128,21 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v7
         with:
-          # Full history so `git diff origin/main...HEAD` (merge-base) works for the reviewer.
+          # Full history so a diff against the base branch (merge-base) works for the reviewer.
           fetch-depth: 0
           persist-credentials: false
+
+      # base-branch is interpolated into the agent's --allowedTools. A ref name may legally contain
+      # `(`, `)` and `,`, so a value taken from untrusted data (for example the PR's own base ref)
+      # could inject extra tool rules. Require a plain literal.
+      - name: Validate the base-branch input
+        env:
+          BASE: ${{ inputs.base-branch }}
+        run: |
+          if ! [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::base-branch must be a literal branch name ([A-Za-z0-9._/-]+)"
+            exit 1
+          fi
 
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
       - name: Fetch the review-loop tooling
@@ -237,11 +265,13 @@ jobs:
           # earlier step exported. Deny wins over allow.
           claude_args: >-
             --permission-mode default
-            --allowedTools "Read,Grep,Glob,Edit(/${{ runner.temp }}/review/**),Write(/${{ runner.temp }}/review/**),Bash(git diff origin/main...HEAD),Bash(git diff --stat origin/main...HEAD),Bash(git diff --name-only origin/main...HEAD),Bash(git log --oneline origin/main..HEAD),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh issue view:*)"
+            --allowedTools "Read,Grep,Glob,Edit(/${{ runner.temp }}/review/**),Write(/${{ runner.temp }}/review/**),Bash(git diff origin/${{ inputs.base-branch }}...HEAD),Bash(git diff --stat origin/${{ inputs.base-branch }}...HEAD),Bash(git diff --name-only origin/${{ inputs.base-branch }}...HEAD),Bash(git log --oneline origin/${{ inputs.base-branch }}..HEAD),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh issue view:*)"
             --disallowedTools "Read(//proc/**),Read(//root/**),Read(//etc/**),Read(//actions-runner/**),Read(/${{ runner.temp }}/_runner_file_commands/**),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(less:*),Bash(more:*),Bash(env:*),Bash(printenv:*),Bash(strings:*),Bash(base64:*),Bash(xxd:*),Bash(od:*)"
           prompt: |
             Act as the code-reviewer agent defined in ${{ inputs.reviewer-agent }} and follow it exactly.
             Review pull request ${{ github.repository }}/pull/${{ github.event.pull_request.number }}.
+            The base branch of this repository's PRs is origin/${{ inputs.base-branch }}: diff against it, not
+            against any other branch.
             You are running in CI mode: do not re-run pre-commit or pytest (the lint and test jobs already do),
             and never start, restart or call any service, host or container (no docker, no curl);
             read CI results with `gh pr checks`. Do not post anything: write your review, in the structure
@@ -473,6 +503,18 @@ jobs:
 
       # The reviewed commit, not the branch tip, so a later push cannot be overwritten. No stored
       # credentials in .git/config: the push step brings its own.
+      # base-branch is interpolated into the agent's --allowedTools. A ref name may legally contain
+      # `(`, `)` and `,`, so a value taken from untrusted data (for example the PR's own base ref)
+      # could inject extra tool rules. Require a plain literal.
+      - name: Validate the base-branch input
+        env:
+          BASE: ${{ inputs.base-branch }}
+        run: |
+          if ! [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::error::base-branch must be a literal branch name ([A-Za-z0-9._/-]+)"
+            exit 1
+          fi
+
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
       - name: Fetch the review-loop tooling
         uses: actions/checkout@v7
@@ -513,13 +555,14 @@ jobs:
           # approve, no label changes, no `gh api`. --permission-mode default: see the reviewer step.
           claude_args: >-
             --permission-mode default
-            --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/**),Write(/${{ github.workspace }}/**),Edit(/${{ runner.temp }}/response/**),Write(/${{ runner.temp }}/response/**),Bash(git add -- *),Bash(git commit -m *),Bash(git status),Bash(git status --short),Bash(git diff),Bash(git diff --stat),Bash(git diff --cached),Bash(git diff origin/main...HEAD),Bash(git log --oneline -n 20),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh issue view:*)"
+            --allowedTools "Read,Grep,Glob,Edit(/${{ github.workspace }}/**),Write(/${{ github.workspace }}/**),Edit(/${{ runner.temp }}/response/**),Write(/${{ runner.temp }}/response/**),Bash(git add -- *),Bash(git commit -m *),Bash(git status),Bash(git status --short),Bash(git diff),Bash(git diff --stat),Bash(git diff --cached),Bash(git diff origin/${{ inputs.base-branch }}...HEAD),Bash(git log --oneline -n 20),Bash(gh pr view:*),Bash(gh pr diff:*),Bash(gh pr checks:*),Bash(gh issue view:*)"
             --disallowedTools "Edit(/${{ github.workspace }}/.git/**),Write(/${{ github.workspace }}/.git/**),Read(//proc/**),Read(//root/**),Read(//etc/**),Read(//actions-runner/**),Read(/${{ runner.temp }}/_runner_file_commands/**),Bash(cat:*),Bash(head:*),Bash(tail:*),Bash(less:*),Bash(more:*),Bash(env:*),Bash(printenv:*),Bash(strings:*),Bash(base64:*),Bash(xxd:*),Bash(od:*)"
           prompt: |
             Act as the review-responder agent defined in ${{ inputs.responder-agent }} and follow it exactly,
             with these CI-mode overrides: this is round 1; you are on the reviewed commit; do NOT push (a separate
             workflow step pushes your commits); do NOT wait for CI; do NOT add labels or edit the PR.
             Work every finding from the latest review on ${{ github.repository }}/pull/${{ github.event.pull_request.number }}.
+            The base branch is origin/${{ inputs.base-branch }}.
             Fix real small findings in separate commits with git add / git commit; open a follow-up issue for large
             ones; decline with a reason. You may change only source, test and documentation files (never a script, Dockerfile, compose
             file, config, unit, AGENTS.md, dependency manifest or workflow; the rule is the protected-paths
@@ -701,6 +744,7 @@ jobs:
           PUSH_TOKEN: ${{ steps.push-token.outputs.token }}
           BRANCH: ${{ github.event.pull_request.head.ref }}
           REVIEWED_SHA: ${{ github.event.pull_request.head.sha }}
+          PROTECTED_EXTRA: ${{ inputs.protected-paths-extra }}
           REPO: ${{ github.repository }}
           BUNDLE: ${{ runner.temp }}/in/fix.bundle
         run: |
@@ -773,6 +817,14 @@ jobs:
           fi
           if ! bash "$guard" < "$changed"; then
             echo "::error::the responder changed protected files (listed above); refusing to push"
+            echo "pushed=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+          # Every commit, not only the net change: a protected file changed in one commit and put back
+          # in the next leaves a clean net diff but lands in history on a merge or rebase. Merge
+          # commits are refused too.
+          if ! bash "$TOOLING/scripts/guard-commits.sh" "$clean" "$REVIEWED_SHA" refs/heads/fix; then
+            echo "::error::a responder commit was refused by guard-commits.sh (reason above); refusing to push"
             echo "pushed=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
