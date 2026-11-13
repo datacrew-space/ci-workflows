@@ -1,0 +1,19 @@
+name: Guards (full history)
+
+on:
+  schedule:
+    - cron: "17 5 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    uses: ./.github/workflows/guards.yml
+    with:
+      all-history: true
+      tooling-ref: ${{ github.sha }}
+      allowed-email-regex: '(@users\.noreply\.github\.com|^noreply@github\.com|^noreply@anthropic\.com|^jaewilson07@gmail\.com)$'
+    secrets:
+      PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}

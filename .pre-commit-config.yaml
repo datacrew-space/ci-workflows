@@ -1,0 +1,34 @@
+# Local hooks for this repository. Install once per clone:
+#   pre-commit install --hook-type pre-commit --hook-type commit-msg
+# See docs/guards.md.
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: detect-private-key
+      - id: check-added-large-files
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
+  - repo: local
+    hooks:
+      - id: private-terms
+        name: private-terms (staged changes)
+        entry: bash scripts/check-private-terms.sh --staged
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]
+      - id: private-terms-message
+        name: private-terms (commit message)
+        entry: bash scripts/check-private-terms.sh --message
+        language: system
+        stages: [commit-msg]
+      - id: commit-identity
+        name: commit-identity
+        entry: bash scripts/check-commit-identity.sh --identity
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-commit]

@@ -1,0 +1,21 @@
+# Caller for the guards in a repository that wants them as a TRUSTED gate. It runs the reusable
+# workflow and its scripts from the `main` branch of the tooling repository, never from the pull
+# request under test, so a pull request cannot edit the gate that grades it. Pin both refs to the
+# same reviewed commit SHA instead of `main` if you prefer immutability. See docs/guards.md.
+name: Guards
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  guards:
+    uses: datacrew-space/ci-workflows/.github/workflows/guards.yml@main
+    with:
+      tooling-ref: main
+    secrets:
+      PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
