@@ -29,13 +29,15 @@ Org-wide rules: [`docs/org/working-rules.md`](docs/org/working-rules.md). Vocabu
 
 Specific to this repository:
 
-- It is public, and so are its PR text and CI logs. Never echo a secret or an untrusted PR field
+- It is public, and so are its PR text and CI logs. Write nothing private (see *Public by default*
+  in `docs/org/working-rules.md`); use placeholders. Never echo a secret or an untrusted PR field
   into a log.
 - Commit with a GitHub noreply address. Repository git config is not versioned, so set it on each
   fresh clone: `git config user.email <id>+<login>@users.noreply.github.com`. The `commit-identity`
   hook refuses anything else.
 - The guard, scanner and report scripts live in `scripts/`, and callers run them pinned to a commit
-  SHA (`tooling-ref`). Never weaken one to make a change pass. Rules, hooks and the CI gate are in
+  SHA (`tooling-ref`). This repository's own CI runs them from `main` by design; see
+  [`docs/guards.md`](docs/guards.md). Never weaken one to make a change pass. Rules, hooks and the CI gate are in
   [`docs/guards.md`](docs/guards.md).
 - Never force-push, never push to `main`, never merge your own PR.
 
