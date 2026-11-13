@@ -27,7 +27,16 @@ def step(job: dict, step_id: str) -> dict:
 def test_review_step_accepts_the_responder_as_a_bot_actor(jobs):
     """Without this the round-2 review fails on the responder's own push and never escalates."""
     allowed = step(jobs["claude-review"], "claude-review")["with"]["allowed_bots"]
-    assert "ci-review-responder" in allowed.split(",")
+    # The caller's `allowed-bots` input only ADDS bots: the responder is in both branches of the expression.
+    assert allowed.count("ci-review-responder") == 2
+    assert "inputs.allowed-bots" in allowed
+    assert "'*'" not in allowed
+
+
+def test_allowed_bots_is_an_input_that_defaults_to_no_extra_bots():
+    """A bot that opens or pushes PRs (e.g. the issue dispatcher) must be listed or its review fails to start."""
+    spec = yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))[True]["workflow_call"]["inputs"]["allowed-bots"]
+    assert spec["default"] == ""
 
 
 @pytest.mark.parametrize(("job", "step_id"), [("claude-review", "agent-token"), ("respond", "agent-token")])

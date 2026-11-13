@@ -87,6 +87,13 @@ on:
       responder-agent:
         type: string
         default: .agents/agents/review-responder.md
+      allowed-bots:
+        description: >-
+          Comma-separated logins (no `[bot]`) of EVERY other bot that opens or pushes PRs in the calling
+          repository, e.g. the issue dispatcher's app. The review responder is always allowed. A bot not
+          listed makes the review action refuse to start. Never `*`.
+        type: string
+        default: ""
     secrets:
       INFISICAL_CLIENT_ID:
         required: true
@@ -223,7 +230,7 @@ jobs:
           # The responder's push re-triggers this workflow as a bot actor; the action refuses bot
           # actors unless they are listed here. Rounds are capped by the event sender: the review
           # after a responder push is round 2, the last (see the `verdict` step).
-          allowed_bots: "ci-review-responder"
+          allowed_bots: ${{ inputs.allowed-bots && format('ci-review-responder,{0}', inputs.allowed-bots) || 'ci-review-responder' }}
           # Read-only tools plus the gh/git calls a review needs, and writes ONLY under REVIEW_DIR.
           # The git rules have no `*`: Claude Code reads a rule without `*` as one exact command,
           # while `git diff:*` admitted `--output=FILE` and `git fetch:*` admitted `--upload-pack=CMD`
