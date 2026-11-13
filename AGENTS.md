@@ -9,7 +9,7 @@ agent, status report). `README.md` explains usage; the header of
 - `.github/workflows/` the reusable workflow and this repo's own CI.
 - `scripts/` guard, scanner and report scripts. Callers pin and run these at a commit SHA.
 - `tests/` pytest and shell tests for the scripts and the workflow structure.
-- `examples/` caller workflow and CI agent prompt templates. `agents/` on-demand reviewer agent.
+- `examples/` caller workflows and CI agent prompt templates. `agents/` on-demand reviewer agent.
 
 ## Commands
 
