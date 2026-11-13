@@ -90,7 +90,12 @@ base branch. A caller that uses a local `./.github/workflows/guards.yml` or pass
 head sha runs the pull request's own scripts, so the pull request can make the check pass without a
 denylist. Such a caller is a bootstrap, not a gate, and must not be a required check.
 
-This repository's own `ci.yml` is in that bootstrap state until a follow-up PR switches it to the
-`@main` form above (that form cannot work before the workflow exists on `main`). Until then, do not
-make `guards` a required check. The weekly `guards-history.yml` run executes on the default branch and
+This repository's own `ci.yml` uses the trusted `@main` form (workflow and `tooling-ref` both `main`),
+so it is a real gate and `guards` can be a required check. The first revision of the guards could not
+use that form because the workflow did not exist on `main` yet; it ran the pull request's own copy
+and was explicitly not a gate. The weekly `guards-history.yml` run executes on the default branch and
 scans the full history.
+
+`ci.yml` and `guards-history.yml` pass `allowed-email-regex` so the owner's own address is accepted
+alongside the noreply forms: a squash merge made from the web UI is attributed to the merging account's
+primary address, not to the noreply identity the commits were made with.

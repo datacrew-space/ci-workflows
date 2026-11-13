@@ -14,5 +14,6 @@ jobs:
     with:
       all-history: true
       tooling-ref: ${{ github.sha }}
+      allowed-email-regex: '(@users\.noreply\.github\.com|^noreply@github\.com|^noreply@anthropic\.com|^jaewilson07@gmail\.com)$'
     secrets:
       PRIVATE_TERMS: ${{ secrets.PRIVATE_TERMS }}
