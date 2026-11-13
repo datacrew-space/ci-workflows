@@ -7,12 +7,16 @@ name: Claude Code Review
 
 on:
   pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+    # Keep `edited`. A stacked PR that GitHub retargets to the base branch after its parent merges
+    # fires `edited`, not `synchronize`. The review is skipped while the PR targets another branch, and a
+    # skipped review counts as a pass, so without a run on the retarget the PR could merge unreviewed.
+    # Title and body edits are ignored by the `if:` and the concurrency group below.
+    types: [opened, synchronize, ready_for_review, reopened, edited]
 
 # A review of a superseded head is wasted tokens; review only the latest push. Except the
 # responder's own push: that run waits, so the run that pushed still reaches its `report` job.
 concurrency:
-  group: claude-review-${{ github.event.pull_request.number }}
+  group: claude-review-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && github.event.changes.base == null && '-edit' || '' }}
   cancel-in-progress: ${{ github.event.sender.login != 'ci-review-responder[bot]' }}
 
 permissions:
@@ -26,12 +30,17 @@ permissions:
 jobs:
   review:
     # Opt-in: set the repository variable CLAUDE_REVIEW_ENABLED=true once the secrets exist.
-    if: ${{ vars.CLAUDE_REVIEW_ENABLED == 'true' }}
+    if: ${{ vars.CLAUDE_REVIEW_ENABLED == 'true' && (github.event.action != 'edited' || github.event.changes.base != null) }}
     uses: datacrew-space/ci-workflows/.github/workflows/claude-code-review.yml@<COMMIT_SHA>
     with:
       tooling-ref: <COMMIT_SHA>
       infisical-domain: <https://your-infisical-host>
       infisical-project-slug: <your-project-slug>
+      # base-branch: main                     # a LITERAL name; PRs on other bases (stacks) are skipped.
+      #                                       # Never pass ${{ github.event.pull_request.base.ref }}.
+      # protected-paths-extra: |              # globs, one per line, always protected
+      #   *auth*.py
+      #   */generated/*
       # runs-on: '["self-hosted", "linux"]'   # JSON; default is "ubuntu-latest"
       # push-runs-on: '"ubuntu-latest"'       # JSON; unset disables the responder's push
     secrets:

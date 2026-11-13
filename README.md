@@ -34,6 +34,8 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 | `infisical-claude-path`, `infisical-github-path` | Folders for the OAuth token and the Apps; default `/claude`, `/github` |
 | `runs-on` | JSON runner label for the review, respond and report jobs; default `"ubuntu-latest"` |
 | `push-runs-on` | JSON runner label for the push job. Must differ from `runs-on`. Empty disables the responder |
+| `base-branch` | Branch PRs must target for the loop to run; default `main`. A PR on any other base (a stacked PR) is skipped, because the reviewer's diff would include its parent's commits |
+| `protected-paths-extra` | Extra always-protected paths, one bash glob per line, for files inside otherwise editable directories (auth modules, generated files). Adds to the default-deny guard and can never allow a path |
 | `tooling-ref` | Commit of this repository to take the guard, scanner and report scripts from |
 | `reviewer-agent`, `responder-agent` | Agent prompt paths in the calling repository |
 
@@ -48,6 +50,15 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 - **Default-deny guard.** [`scripts/protected-paths.sh`](scripts/protected-paths.sh) allows only
   source, test and documentation paths; scripts, workflows, Dockerfiles, compose files, configs,
   dependency manifests and agent instructions are always refused.
+- **Every commit is judged, not just the net change.** [`scripts/guard-commits.sh`](scripts/guard-commits.sh)
+  checks each responder commit against the guard and refuses merge commits, so a protected file
+  changed in one commit and put back in the next cannot reach history on a merge or rebase.
+- **Merging while the review is pending.** If your repository auto-merges ready PRs, make the review
+  gate part of the required check (for example, call this workflow as a job of your main CI workflow
+  and add it to the aggregate job's `needs`; a skipped review then counts as a pass, which is also the
+  rollback). Keep `edited` in the caller's `types` (see `examples/caller.yml`): a stacked PR that GitHub
+  retargets to the base branch fires only `edited`, and without a run on it the green status from the
+  skipped run would let it merge unreviewed. A required status that is never posted blocks every PR.
 - **One secret per fetch.** Each secret is fetched by name so an agent's environment holds only what
   it needs. The Infisical action is pinned by commit SHA to a version that honours `secret-name`.
 
