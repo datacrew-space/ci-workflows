@@ -217,37 +217,39 @@ def test_encoded_push_token_is_masked_before_use(jobs):
     assert script.index("::add-mask::") < script.index("extraheader")
 
 
-def test_push_step_uses_the_protected_paths_guard_and_never_forces(jobs):
+def test_push_step_never_forces_and_pushes_from_the_verified_fresh_repo(jobs):
+    """What the guards, size cap and scans do is tested with real bundles in test_verify_fix_bundle.py."""
     script = step(jobs["push"], "push")["run"]
-    assert "protected-paths.sh" in script
-    assert "diff -z --no-renames --name-only" in script
-    assert "--force" not in script and " -f " not in script
-    assert "persist-credentials" not in script
+    assert "--force" not in script and " -f " not in script and "+refs" not in script
     assert "core.hooksPath=/dev/null" in script  # nothing the agent wrote under .git/ runs with the token
-    assert 'git init -q "$clean"' in script  # push from a fresh repository, not the agent's workspace
+    assert 'git -C "$CLEAN"' in script and "refs/heads/fix:refs/heads/$BRANCH" in script
+    assert step(jobs["push"], "push")["env"]["CLEAN"] == "${{ steps.verify.outputs.clean }}"
     checkout = next(s for s in jobs["push"]["steps"] if str(s.get("uses", "")).startswith("actions/checkout"))
     assert checkout["with"]["persist-credentials"] is False
 
 
-def test_the_guard_script_comes_from_the_reviewed_commit_not_the_agents_workspace(jobs):
-    """The agent edits the workspace; reading the guard from there would let it disarm the guard."""
-    script = step(jobs["push"], "push")["run"]
-    assert '"$TOOLING/scripts/protected-paths.sh"' in script
-    assert "REVIEWED_SHA:.github/scripts" not in script  # never the PR's own copy
-    assert "bash .github/scripts/protected-paths.sh" not in script
-    assert 'bash "$GITHUB_WORKSPACE' not in script
+def test_the_verifier_comes_from_the_pinned_tooling_not_the_agents_workspace(jobs):
+    """The agent edits the workspace; reading the verifier or guards from there would let it disarm them."""
+    verify = step(jobs["push"], "verify")
+    assert verify["run"].strip() == (
+        'bash "$TOOLING/scripts/verify-fix-bundle.sh" "$BUNDLE" "$REVIEWED_SHA" "$BRANCH" "$GITHUB_WORKSPACE"'
+    )
+    assert verify["env"]["BUNDLE"] == "${{ runner.temp }}/in/fix.bundle"
+    assert verify["env"]["BRANCH"] == "${{ github.event.pull_request.head.ref }}"
+    assert verify["env"]["REVIEWED_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    for s in jobs["push"]["steps"]:
+        assert 'bash "$GITHUB_WORKSPACE' not in s.get("run", "")
 
 
-def test_push_step_fails_closed_when_the_diff_or_the_guard_fails(jobs):
-    """An empty path list is a pass in the script, so every failure before it must stop the push."""
-    script = step(jobs["push"], "push")["run"]
-    assert 'if ! git -C "$clean" diff -z' in script
-    assert 'if ! bash "$guard" < "$changed"; then' in script
-    push_at = script.index('push "$url"')
-    assert script.index('if ! bash "$guard"') < push_at
-    assert script.index('if ! git -C "$clean" diff -z') < push_at
-    # each refusal exits non-zero before the push line
-    assert script[:push_at].count("exit 1") >= 3
+def test_nothing_is_pushed_unless_the_verify_step_passed_and_said_ready(jobs):
+    """The verify step may not be soft-failed, and it runs before any token exists in the job."""
+    steps = jobs["push"]["steps"]
+    ids = [s.get("id") for s in steps]
+    verify = step(jobs["push"], "verify")
+    assert "continue-on-error" not in verify and "if" not in verify
+    assert "|| true" not in verify["run"] and "set +e" not in verify["run"]
+    assert ids.index("verify") < ids.index("push-token") < ids.index("push")
+    assert step(jobs["push"], "push")["if"] == "${{ steps.verify.outputs.ready == 'true' }}"
 
 
 def test_the_responder_cannot_run_docker_or_deploy(jobs):
@@ -264,7 +266,7 @@ def test_review_is_opt_in_and_skips_drafts_and_forks(jobs):
     cond = jobs["claude-review"]["if"]
     # Opt-in is the caller's gate (the example caller), not this workflow's.
     caller = yaml.safe_load(CALLER.read_text(encoding="utf-8"))
-    assert caller["jobs"]["review"]["if"] == "${{ vars.CLAUDE_REVIEW_ENABLED == 'true' }}"
+    assert "vars.CLAUDE_REVIEW_ENABLED == 'true'" in caller["jobs"]["review"]["if"]
     assert "!github.event.pull_request.draft" in cond
     assert "github.event.pull_request.head.repo.full_name == github.repository" in cond
 
@@ -401,10 +403,11 @@ def test_the_push_job_gets_the_agents_commits_only_as_a_validated_bundle(jobs):
     assert uploads and all(s["with"]["path"].endswith(".bundle") for s in uploads)
     steps = jobs["push"]["steps"]
     assert any(str(s.get("uses", "")).startswith("actions/download-artifact") for s in steps)
-    script = step(jobs["push"], "push")["run"]
-    assert "bundle verify" in script
-    assert "merge-base --is-ancestor" in script  # descends from the reviewed commit
-    assert "merge-base --is-ancestor" in script and 'bash "$GITHUB_WORKSPACE' not in script
+    ids = [s.get("id") for s in steps]
+    download = next(i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("actions/download-artifact"))
+    assert download < ids.index("verify")
+    script = step(jobs["push"], "verify")["run"]
+    assert 'bash "$GITHUB_WORKSPACE' not in script
 
 
 # Every secret the loop is allowed to hold. A new name must be added here on purpose.
