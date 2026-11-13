@@ -253,10 +253,13 @@ def test_the_responder_private_key_is_cleared_right_after_minting_in_push(jobs):
 
 
 def test_the_push_job_scans_what_it_is_about_to_push_for_secrets(jobs):
-    script = step(jobs["push"], "push")["run"]
-    assert "scan-secrets.sh" in script
-    assert script.rindex("scan-secrets") < script.index('push "$url"')
-    assert "$TOOLING/scripts/scan-secrets.sh" in script
+    """The scan is a step of the verifier (tested with a real token-shaped commit); here: it cannot be skipped."""
+    text = (Path(__file__).resolve().parents[1] / "scripts" / "verify-fix-bundle.sh").read_text(encoding="utf-8")
+    assert 'bash "$here/scan-secrets.sh" -' in text
+    steps = jobs["push"]["steps"]
+    ids = [s.get("id") for s in steps]
+    assert ids.index("verify") < ids.index("push")
+    assert step(jobs["push"], "verify")["run"].count("verify-fix-bundle.sh") == 1
 
 
 def test_report_says_so_when_the_push_runner_is_not_configured(jobs):

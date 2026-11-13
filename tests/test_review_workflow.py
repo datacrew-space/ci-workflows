@@ -15,6 +15,12 @@ CALLER = Path(__file__).resolve().parents[1] / "examples" / "caller.yml"
 WORKFLOW = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "claude-code-review.yml"
 
 
+WORKFLOW_TEXT = WORKFLOW.read_text(encoding="utf-8")
+_DOC = yaml.safe_load(WORKFLOW_TEXT)
+# PyYAML reads the key `on` as the boolean True.
+ON_INPUTS = _DOC.get("on", _DOC.get(True))["workflow_call"]["inputs"]
+
+
 @pytest.fixture(scope="module")
 def jobs() -> dict:
     return yaml.safe_load(WORKFLOW.read_text(encoding="utf-8"))["jobs"]
@@ -27,7 +33,17 @@ def step(job: dict, step_id: str) -> dict:
 def test_review_step_accepts_the_responder_as_a_bot_actor(jobs):
     """Without this the round-2 review fails on the responder's own push and never escalates."""
     allowed = step(jobs["claude-review"], "claude-review")["with"]["allowed_bots"]
-    assert "ci-review-responder" in allowed.split(",")
+    assert allowed == "${{ inputs.responder-bot-login }}"
+    # and the input's default is the responder App every existing caller already uses
+    assert ON_INPUTS["responder-bot-login"]["default"] == "ci-review-responder"
+
+
+def test_the_responder_commit_author_comes_from_the_inputs_not_a_hardcoded_id(jobs):
+    w = step(jobs["respond"], "respond-agent")["with"]
+    assert w["bot_name"] == "${{ format('{0}[bot]', inputs.responder-bot-login) }}"
+    assert w["bot_id"] == "${{ inputs.responder-bot-id }}"
+    assert ON_INPUTS["responder-bot-id"]["default"] == "355840606"
+    assert "355840606" not in WORKFLOW_TEXT.replace('default: "355840606"', "")
 
 
 @pytest.mark.parametrize(("job", "step_id"), [("claude-review", "agent-token"), ("respond", "agent-token")])
@@ -166,7 +182,7 @@ def test_a_failed_post_does_not_fail_the_review_job(jobs):
 
 def test_round_two_only_follows_a_responder_push(jobs):
     prior = step(jobs["claude-review"], "verdict")["env"]["PRIOR"]
-    assert prior == "${{ github.event.sender.login == 'ci-review-responder[bot]' && '1' || '0' }}"
+    assert prior == "${{ github.event.sender.login == format('{0}[bot]', inputs.responder-bot-login) && '1' || '0' }}"
 
 
 def test_the_responders_push_does_not_cancel_the_run_that_pushed(jobs):
@@ -208,37 +224,39 @@ def test_encoded_push_token_is_masked_before_use(jobs):
     assert script.index("::add-mask::") < script.index("extraheader")
 
 
-def test_push_step_uses_the_protected_paths_guard_and_never_forces(jobs):
+def test_push_step_never_forces_and_pushes_from_the_verified_fresh_repo(jobs):
+    """What the guards, size cap and scans do is tested with real bundles in test_verify_fix_bundle.py."""
     script = step(jobs["push"], "push")["run"]
-    assert "protected-paths.sh" in script
-    assert "diff -z --no-renames --name-only" in script
-    assert "--force" not in script and " -f " not in script
-    assert "persist-credentials" not in script
+    assert "--force" not in script and " -f " not in script and "+refs" not in script
     assert "core.hooksPath=/dev/null" in script  # nothing the agent wrote under .git/ runs with the token
-    assert 'git init -q "$clean"' in script  # push from a fresh repository, not the agent's workspace
+    assert 'git -C "$CLEAN"' in script and "refs/heads/fix:refs/heads/$BRANCH" in script
+    assert step(jobs["push"], "push")["env"]["CLEAN"] == "${{ steps.verify.outputs.clean }}"
     checkout = next(s for s in jobs["push"]["steps"] if str(s.get("uses", "")).startswith("actions/checkout"))
     assert checkout["with"]["persist-credentials"] is False
 
 
-def test_the_guard_script_comes_from_the_reviewed_commit_not_the_agents_workspace(jobs):
-    """The agent edits the workspace; reading the guard from there would let it disarm the guard."""
-    script = step(jobs["push"], "push")["run"]
-    assert '"$TOOLING/scripts/protected-paths.sh"' in script
-    assert "REVIEWED_SHA:.github/scripts" not in script  # never the PR's own copy
-    assert "bash .github/scripts/protected-paths.sh" not in script
-    assert 'bash "$GITHUB_WORKSPACE' not in script
+def test_the_verifier_comes_from_the_pinned_tooling_not_the_agents_workspace(jobs):
+    """The agent edits the workspace; reading the verifier or guards from there would let it disarm them."""
+    verify = step(jobs["push"], "verify")
+    assert verify["run"].strip() == (
+        'bash "$TOOLING/scripts/verify-fix-bundle.sh" "$BUNDLE" "$REVIEWED_SHA" "$BRANCH" "$GITHUB_WORKSPACE"'
+    )
+    assert verify["env"]["BUNDLE"] == "${{ runner.temp }}/in/fix.bundle"
+    assert verify["env"]["BRANCH"] == "${{ github.event.pull_request.head.ref }}"
+    assert verify["env"]["REVIEWED_SHA"] == "${{ github.event.pull_request.head.sha }}"
+    for s in jobs["push"]["steps"]:
+        assert 'bash "$GITHUB_WORKSPACE' not in s.get("run", "")
 
 
-def test_push_step_fails_closed_when_the_diff_or_the_guard_fails(jobs):
-    """An empty path list is a pass in the script, so every failure before it must stop the push."""
-    script = step(jobs["push"], "push")["run"]
-    assert 'if ! git -C "$clean" diff -z' in script
-    assert 'if ! bash "$guard" < "$changed"; then' in script
-    push_at = script.index('push "$url"')
-    assert script.index('if ! bash "$guard"') < push_at
-    assert script.index('if ! git -C "$clean" diff -z') < push_at
-    # each refusal exits non-zero before the push line
-    assert script[:push_at].count("exit 1") >= 3
+def test_nothing_is_pushed_unless_the_verify_step_passed_and_said_ready(jobs):
+    """The verify step may not be soft-failed, and it runs before any token exists in the job."""
+    steps = jobs["push"]["steps"]
+    ids = [s.get("id") for s in steps]
+    verify = step(jobs["push"], "verify")
+    assert "continue-on-error" not in verify and "if" not in verify
+    assert "|| true" not in verify["run"] and "set +e" not in verify["run"]
+    assert ids.index("verify") < ids.index("push-token") < ids.index("push")
+    assert step(jobs["push"], "push")["if"] == "${{ steps.verify.outputs.ready == 'true' }}"
 
 
 def test_the_responder_cannot_run_docker_or_deploy(jobs):
@@ -255,7 +273,7 @@ def test_review_is_opt_in_and_skips_drafts_and_forks(jobs):
     cond = jobs["claude-review"]["if"]
     # Opt-in is the caller's gate (the example caller), not this workflow's.
     caller = yaml.safe_load(CALLER.read_text(encoding="utf-8"))
-    assert caller["jobs"]["review"]["if"] == "${{ vars.CLAUDE_REVIEW_ENABLED == 'true' }}"
+    assert "vars.CLAUDE_REVIEW_ENABLED == 'true'" in caller["jobs"]["review"]["if"]
     assert "!github.event.pull_request.draft" in cond
     assert "github.event.pull_request.head.repo.full_name == github.repository" in cond
 
@@ -392,10 +410,11 @@ def test_the_push_job_gets_the_agents_commits_only_as_a_validated_bundle(jobs):
     assert uploads and all(s["with"]["path"].endswith(".bundle") for s in uploads)
     steps = jobs["push"]["steps"]
     assert any(str(s.get("uses", "")).startswith("actions/download-artifact") for s in steps)
-    script = step(jobs["push"], "push")["run"]
-    assert "bundle verify" in script
-    assert "merge-base --is-ancestor" in script  # descends from the reviewed commit
-    assert "merge-base --is-ancestor" in script and 'bash "$GITHUB_WORKSPACE' not in script
+    ids = [s.get("id") for s in steps]
+    download = next(i for i, s in enumerate(steps) if str(s.get("uses", "")).startswith("actions/download-artifact"))
+    assert download < ids.index("verify")
+    script = step(jobs["push"], "verify")["run"]
+    assert 'bash "$GITHUB_WORKSPACE' not in script
 
 
 # Every secret the loop is allowed to hold. A new name must be added here on purpose.

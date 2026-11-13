@@ -5,7 +5,7 @@ How the engineering skills consume this repo's domain documentation. Layout: **s
 ## Before exploring, read these
 
 - `GLOSSARY.md` at the repo root.
-- `docs/adr/`: ADRs that touch the area you are about to work in.
+- `docs/adr/` (not created yet): ADRs that touch the area you are about to work in.
 
 If these files don't exist, proceed silently. Don't flag their absence; the domain-modeling skill
 creates them lazily when terms or decisions get resolved.
@@ -13,7 +13,7 @@ creates them lazily when terms or decisions get resolved.
 ```
 /
 ├── GLOSSARY.md
-├── docs/adr/
+├── docs/adr/          # not created yet
 └── ...
 ```
 

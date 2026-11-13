@@ -23,10 +23,27 @@
 # arrives raw, one record each, and a newline inside a name cannot start a second record.
 #
 # The caller must run `git diff` ON ITS OWN and refuse to push when it fails: this script only
-# judges what it is given, and an empty list is a pass. (tests/review_loop/test_protected_paths.py)
+# judges what it is given, and an empty list is a pass. (tests/test_protected_paths.py)
 #
 # Matching is case-insensitive so a case-folding checkout cannot hide `.GitHub/` or `Deploy.sh`.
 set -uo pipefail
+
+# Caller-supplied extra protection: PROTECTED_EXTRA holds one bash glob per line, matched against
+# the whole lower-cased path (`*` crosses `/`, extglob is on). A path that matches is protected even
+# inside an allowed directory. It can only ADD protection: nothing here can make a path allowed, so
+# the built-in default-deny guard always still applies. A malformed pattern does NOT fail closed
+# though: it silently protects nothing. Write full-path globs (`*auth*.py`, `apps/*/src/generated/*`);
+# a trailing `/` is read as "everything under this directory". No quoting: quotes are part of the
+# pattern. Blank lines and `#` comments are ignored.
+extra_patterns=()
+while IFS= read -r line; do
+  line="${line%$'\r'}"
+  line="${line#"${line%%[![:space:]]*}"}"
+  line="${line%"${line##*[![:space:]]}"}"
+  case "$line" in '' | '#'*) continue ;; esac
+  case "$line" in */) line="${line}*" ;; esac
+  extra_patterns+=("${line,,}")
+done <<< "${PROTECTED_EXTRA:-}"
 
 found=0
 shopt -s extglob
@@ -44,6 +61,21 @@ while IFS= read -r -d '' path; do
       continue
       ;;
   esac
+
+  # The caller's extra patterns (see PROTECTED_EXTRA above).
+  matched_extra=0
+  for pat in ${extra_patterns[@]+"${extra_patterns[@]}"}; do
+    # shellcheck disable=SC2053 # the right-hand side is meant to be a glob
+    if [[ $lower == $pat ]]; then
+      matched_extra=1
+      break
+    fi
+  done
+  if [ "$matched_extra" = 1 ]; then
+    printf '%s\n' "$path"
+    found=1
+    continue
+  fi
 
   # Step 1: names that are protected wherever they sit, even inside an allowed directory.
   case "$base" in
