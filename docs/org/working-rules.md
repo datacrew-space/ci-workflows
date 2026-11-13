@@ -29,7 +29,7 @@ stop. Don't guess and carry on.
   Merge Danger, plus `Closes #N` for the issue.
 - **Someone else reviews it** on GitHub: the code-review loop or an independent reviewer. Findings
   go on the pull request and are handled before merge.
-- **You never merge your own pull request.** A reviewer, the coordinator or the maintainer merges it
+- **You never merge your own pull request.** A reviewer or the maintainer merges it
   once the review is recorded. Squash, then delete the branch.
 - **Never `gh pr merge --admin`.** Fix red CI instead of bypassing it.
   - If `main` is red for reasons unrelated to your diff, fix `main` in a separate pull request, or
@@ -54,7 +54,8 @@ stop. Don't guess and carry on.
   `origin/<default>`. Stale docs describe a repository that no longer exists.
 - Resolve repository roots with `git rev-parse --show-toplevel` or the remote URL. Never hardcode a
   clone layout.
-- Work in the repository the change is about, on a branch off its `main`.
+- Work in the repository the change is about, on a branch off its `main`. Never push to `main`,
+  and never force-push.
 - Never commit or discard changes you didn't make. Stage only your own hunks.
 - Don't use `git stash` for baselines; it is shared across worktrees. Compare with
   `git show <ref>:<path>`, and park work by committing.
@@ -89,7 +90,8 @@ stop. Don't guess and carry on.
 - Raise specific named exceptions for domain failures and catch the narrowest type. Never catch bare
   `Exception` around domain operations, and don't replace the real error with a guessed message.
 - API client and routing layers raise on any non-2xx response.
-- Library code logs through the project logger (crew-logger), never `print()`. Wrap request
+- Library code logs through the project logger (crew-logger, once it is published in the org),
+  never `print()`. Wrap request
   boundaries (routes, MCP tools, job entry points) with the repository's logging decorator. Never
   log secrets or raw prompts.
 - No function-local imports to dodge import cycles; restructure the modules.
@@ -99,10 +101,11 @@ stop. Don't guess and carry on.
   hand-write it inline in a prompt.
 - Before writing a call to an unfamiliar API, read a working caller or the library source.
 - Before hand-rolling auth, payments, queues, search or similar, name the established provider and
-  make the case against it.
+  explain why it doesn't fit. Use the provider unless you can.
 - Apps forward the caller's own credential, and the service that owns the data authorizes once, at
   one chokepoint.
-- Recurring or scheduled jobs run on trigger.dev, not GitHub Actions.
+- Recurring or scheduled application jobs run on trigger.dev, not GitHub Actions. Repository
+  hygiene CI (scans, guards, scheduled history checks) stays in GitHub Actions.
 
 ### mdrag
 

@@ -6,8 +6,8 @@ defined in [`GLOSSARY.md`](../../GLOSSARY.md).
 
 ## Goals
 
-1. **Publish safely.** The existing repositories carry credentials in their history and private
-   details in their trees. Nothing moves until it is clean.
+1. **Publish safely.** A repository moves into the org only from a clean tree, with fresh history,
+   after it passes both gates and the privacy checklist.
 2. **Design mdrag for extension.** v1 is a small core; fetching, processing and apps live in
    satellites that use only the public API. Each extraction proves the core can be extended.
 3. **Make onboarding a product feature,** so a new agent can find its way in without reading the
@@ -24,9 +24,9 @@ Each phase finishes before the next starts, except where noted.
    - Both **public-repo guards** on this repository, which is already public. (The guard scripts
      and reusable workflow exist; see [`docs/guards.md`](../guards.md).)
    - The written **privacy checklist** every org repository passes before its first push.
-2. **Rotate credentials.** Scan the full history of every repository that is moving or being
-   archived, report findings by name and path only, and **rotate** every live credential, highest
-   blast radius first. A repository's v1 is blocked until its history holds no live credential.
+2. **Credential hygiene.** Every repository's full history is scanned before it moves, findings
+   are reported by name and path only, and any credential found is **rotated** before the
+   repository's v1 is created.
 3. **Set up the org.** The `.github` repository and rulesets, the **template repository** with both
    gates, and the org home.
 4. **Rehearse on small repositories.** `crew-logger` first, then `dc-auth` and `domain-state`, each

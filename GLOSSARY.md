@@ -1,7 +1,38 @@
 # Glossary
 
-The words this organization uses. Definitions only; decisions live in `docs/adr/` and plans in
-`docs/org/`. When a term here conflicts with how you were about to use a word, use the term here.
+The words this organization uses. Definitions only; plans live in `docs/org/`, and decisions will
+live in `docs/adr/` (not created yet). When a term here conflicts with how you were about to use a
+word, use the term here.
+
+Until the org home is chosen, this file holds both the org's vocabulary and this repository's own
+(the review loop). When the org home moves elsewhere, the org sections move with it.
+
+## This repository: the review loop
+
+**Review loop**
+The reusable workflow that has a reviewer agent review a pull request and, after changes are
+requested, lets a responder agent push small fixes. It ends green or red.
+
+**Round**
+One review of a pull request. A push by the responder makes the next review round 2, the last; any
+other push starts again at round 1.
+
+**Verdict**
+A reviewer's result for a round, reported as the `review-verdict` status: green (ready to merge),
+red, or pending (an agent is still working).
+
+**Reviewer**, **responder**, **orchestrator**
+The three roles in the loop, each acting through its own GitHub App: the reviewer posts the
+review, the responder posts its response and pushes fixes, and the orchestrator (plain workflow
+code, no model) reports the verdict and applies `needs-human`.
+
+**`needs-human`**
+The label on a red pull request whose code needs a person's decision. Red without it is a tooling
+failure: re-run the workflow.
+
+**GitHub App**
+A GitHub integration identity, such as the reviewer's. Always say "GitHub App" in full; plain
+**App** means something else (see below).
 
 ## Organization
 
@@ -107,7 +138,7 @@ an app.
 
 **App**
 A packaged experience built on workflows, used by people.
-_Avoid_: "knowledge app" (informal only).
+_Avoid_: "knowledge app" (informal only); "app" for a GitHub App (say **GitHub App**).
 
 **Provisional account**
 An account an app creates for a visitor who has not signed up, which the visitor can claim later
