@@ -55,12 +55,16 @@ when configuring or operating it:
 - Default: one PR per issue off the default branch, started when its blockers have merged. Use a stack
   only for a true linear chain where waiting on review would block you. A fan-in (one issue blocked
   by several) cannot be a stack.
-- Open the child with its base set to the parent's branch, then register the stack (`gh stack link
-  <bottom> <top>`). GitHub does not infer a stack from bases; an unregistered chain loses the
+- Open the child with its base set to the parent's branch, then register the stack (`gh stack link`
+  with the whole stack, bottom to top; `gh stack` is the `github/gh-stack` extension, install it first). GitHub does not infer a stack from bases; an unregistered chain loses the
   auto-retarget, and merging the parent with branch deletion closes the child for good.
 - Merge bottom-up. A stacked PR cannot be merged with `gh pr merge`; it needs GitHub's asynchronous
   merge endpoint with the head SHA pinned, or the web UI. If your merge tooling blocks that endpoint,
   a human merges the stack in the UI.
+- **The review loop skips a PR whose base is not `base-branch`** (default `main`), and a skipped
+  review counts as a pass in the caller. An atomic stack merge never retargets the children, so
+  children merged that way land with no review at all. Retarget each child to the default branch and
+  let its review run before it merges, or merge a stack only after every layer has a recorded review.
 - A stack must stay linear. When the trunk moves, use "Rebase stack" (or `gh stack rebase`); this is a
   force-push of every branch, so it is the owner's call. Merging the trunk into a stacked branch
   instead breaks linearity.

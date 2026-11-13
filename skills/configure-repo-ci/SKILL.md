@@ -5,14 +5,18 @@ description: Set up or audit a repository's CI, CD and branch configuration with
 
 # Configure a repository's CI, CD and branches
 
-The reference implementation is this repository: `.github/workflows/claude-code-review.yml`, the
-scripts in `scripts/`, the prompts in `examples/`, the guards in `docs/guards.md`. Copy shapes from
-there; this skill says which shape, in what order, and what bit us.
+The reference implementation of the review loop is this repository: `.github/workflows/claude-code-review.yml`,
+the scripts in `scripts/`, the prompts in `examples/`, the guards in `docs/guards.md`. Copy shapes from
+there; this skill says which shape, in what order, and what bit us. This repository's own `ci.yml`
+has no aggregate `ci-ok` job and does not run pre-commit: for those two, follow
+[references/baseline.md](references/baseline.md), or the reusable Python CI workflow and its
+scaffold once they are merged here.
 
 ## Steps
 
 1. **Survey before changing.** Record the repo's default branch, visibility, plan (free personal
-   accounts return 404/403 for protection: write "not available", never "none"), merge settings,
+   accounts return 404/403 for protection on private repositories: write "not available", never
+   "none"), merge settings,
    workflows, pre-commit config and existing bots. Compare against
    [references/known-variations.md](references/known-variations.md) to tell an intentional difference
    from drift. Done when every row of that file's checklist has a value.

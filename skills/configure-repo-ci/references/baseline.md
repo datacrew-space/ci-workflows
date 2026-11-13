@@ -57,7 +57,7 @@ The shape every repository starts from. Each rule says why, so a variation can b
 | Required checks | `ci-ok` only | Job changes never touch protection. |
 | Required reviews | 0 | Agent and bot reviews are status-based, not GitHub approvals. |
 | Force push, deletion | blocked | |
-| `enforce_admins` | off | The owner can merge in an emergency after reading the log; agents never use admin merge. |
+| `enforce_admins` | the owner's call | Whatever it is set to, nobody merges with `--admin`: fix the red check instead. |
 | Delete branch on merge | on | |
 | Auto-merge | off, or gated on review | Auto-merge on green CI alone merges unreviewed work. Where it is on, a draft is the only hold. |
 | Merge method | squash for feature PRs | Stacks need the method GitHub's stack merge accepts; check before merging one. |
@@ -74,4 +74,5 @@ owner's decision.
 - Long-running services on your own hosts: deploy from the host's canonical checkout with its own
   deploy script, not from a CI job, a worktree or a temp directory. Persistent settings live in the
   host repo's compose and config, reviewed.
-- Recurring jobs belong on a scheduler built for them, not on Actions cron.
+- Recurring application jobs belong on a scheduler built for them, not on Actions cron. Repository
+  hygiene jobs (for example a weekly guard run over the full history) stay in Actions.

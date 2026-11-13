@@ -34,7 +34,7 @@ that had to be dug through.
    the step after it must lift the cause (grep the action's output for the refusal line) into an
    annotation. A script wrapping `gh` must print `gh`'s stderr, not just "gh pr list failed".
 7. **Group long output** with `::group::<name>` / `::endgroup::` so the decision lines are not buried.
-8. **Job and step names read as a story.** "Fetch GitHub App credentials", "Mint the ci-code-reviewer
+8. **Job and step names read as a story.** "Fetch CI_CODE_REVIEWER_APP_ID", "Mint the ci-code-reviewer
    agent token", "Drop the app credentials from the job environment", "Run code-reviewer agent",
    "Work out the verdict", "Post the review". A failure then reads as a sentence: the run stopped at
    "Mint the ... token", so the App ID or key is wrong.

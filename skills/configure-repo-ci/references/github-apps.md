@@ -36,8 +36,8 @@ repository; read its header before changing anything here.
   action pinned by SHA), and `tests/test_review_workflow.py` pins the list of names each job may hold.
   A whole-folder fetch plus a "drop names matching `_PRIVATE_KEY`" step leaves every other secret in
   that folder (for example another agent's service token) in the agent's environment.
-- The agent's commits carry the App's bot identity, looked up at run time from the token's App slug,
-  not hard-coded.
+- The agent's commits carry the App's bot identity. The author id comes from the `responder-bot-id`
+  input (its default is the stock responder App's id), so a caller with its own App must set it.
 - The agent never pushes. It commits locally, hands a git bundle to a job with no agent, and that job
   verifies the bundle, runs the protected-path guard and the secret scan, and pushes without force.
 
