@@ -37,6 +37,8 @@ judge() {
     agents.md | claude.md | claude.local.md | .mcp.json) ;;
     */agents.md | */claude.md | */claude.local.md | */.mcp.json) ;;
     .pre-commit-config.yaml | ruff.toml | .secrets.baseline) ;;
+    # a nested .claude/ (settings, skills) and .gitattributes (which can hide files from a diff view)
+    */.claude/* | .gitattributes | */.gitattributes) ;;
     *)
       for pattern in "${extra[@]}"; do
         pattern="${pattern,,}"

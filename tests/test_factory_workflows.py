@@ -473,3 +473,10 @@ def test_named_bot_logins_are_accepted(value):
 @pytest.mark.parametrize("value", ["*", "app,*", "my app", "a,,b", "app,", "a]b", "x; echo hi"])
 def test_a_wildcard_or_malformed_allowed_bots_is_refused(value):
     assert run_allowed_bots_check(value) == 1
+
+
+def test_the_issue_title_goes_through_the_sanitiser_before_it_becomes_the_pr_title(jobs):
+    """A title like `Fixes #99` would close #99 from the squash commit subject."""
+    run = step(jobs["publish"], "push")["run"]
+    assert "bash ci-tooling/scripts/sanitize-pr-text.sh)" in run
+    assert 'title="Work on issue #${ISSUE}"' in run

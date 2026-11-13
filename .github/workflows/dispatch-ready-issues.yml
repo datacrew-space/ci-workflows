@@ -555,7 +555,12 @@ jobs:
           git -C "$clean" -c core.hooksPath=/dev/null -c "http.${GITHUB_SERVER_URL}/.extraheader=$auth" \
             push "$url" "refs/heads/work:refs/heads/$branch"
 
-          title=$(GH_TOKEN="$PUSH_TOKEN" gh issue view "$ISSUE" --repo "$REPO" --json title --jq .title | head -n 1)
+          # The issue title becomes the PR title and, on a squash merge, the commit subject, so it goes
+          # through the same sanitiser as the PR text (no closing keyword, no live @mention). A title
+          # that is only a closing reference falls back to a neutral one.
+          title=$(GH_TOKEN="$PUSH_TOKEN" gh issue view "$ISSUE" --repo "$REPO" --json title --jq .title | head -n 1 \
+            | bash ci-tooling/scripts/sanitize-pr-text.sh)
+          [ -n "$title" ] || title="Work on issue #${ISSUE}"
           body="$RUNNER_TEMP/final-body.md"
           if [ -s "$RUNNER_TEMP/agent/pr-body.md" ]; then
             # The agent's text is untrusted: drop any line that would close an issue or PR (the

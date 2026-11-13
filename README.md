@@ -136,6 +136,7 @@ group name on purpose, and the two label names in the example callers' `if:` are
 - The agent may not change `.github/`, `.claude/`, agent prompts and skills, `AGENTS.md`/`CLAUDE.md`/
   `CLAUDE.local.md`/`.mcp.json` at any depth, lint config, `scripts/check-*` and `scripts/check_*`, all of `.agents/`, its own prompt, or anything
   in `extra-protected-paths`.
+- **Linux runners only.** The tool paths and `base64 -w0` assume GNU tools on Linux.
 - **Runners: GitHub-hosted or ephemeral self-hosted only.** On a persistent runner the agent can leave
   files behind (`~/.gitconfig`, a binary earlier on `PATH`) for the next job; a persistent runner is not
   a boundary.
