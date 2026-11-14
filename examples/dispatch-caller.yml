@@ -1,0 +1,71 @@
+name: Dispatch ready issues
+
+# Copy to .github/workflows/dispatch-ready-issues.yml in the repository whose issues the agents work.
+# Pin BOTH the `uses:` ref and `tooling-ref` to the same commit SHA of datacrew-space/ci-workflows and
+# bump them together in a reviewed PR. Setup steps and the security model: README, "Issue dispatcher".
+
+on:
+  issues:
+    types: [closed, reopened, labeled, unlabeled]
+  workflow_dispatch: # a manual sweep; point a scheduler here to cover a missed event
+
+permissions:
+  contents: read
+
+# One dispatch at a time. A waiting run is replaced by the newest waiting one, which is fine: every run
+# re-reads all candidates from scratch. (The reusable workflow also serialises the claim itself, under a
+# different group name; do not reuse that name here.)
+# The label names in the `if:` below must match the `ready-label` and `needs-human-label` inputs.
+concurrency:
+  group: dispatch-ready-issues
+  cancel-in-progress: false
+
+jobs:
+  dispatch:
+    # Opt-in: set the repository variable ISSUE_DISPATCH_ENABLED=true once the secrets exist. Only the
+    # events that can unblock work start a run (a blocker closing, the queue label, the retry label).
+    if: >-
+      ${{ vars.ISSUE_DISPATCH_ENABLED == 'true' && (
+      github.event_name == 'workflow_dispatch' ||
+      github.event.action == 'closed' ||
+      github.event.action == 'reopened' ||
+      github.event.label.name == 'ready-for-agent' ||
+      github.event.label.name == 'needs-human') }}
+    uses: datacrew-space/ci-workflows/.github/workflows/dispatch-ready-issues.yml@<COMMIT_SHA>
+    # The reusable jobs need these scopes; the caller must grant at least them.
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    with:
+      tooling-ref: <COMMIT_SHA>
+      # Everything below is optional; the values shown are the defaults.
+      # runs-on: '"ubuntu-latest"'                 # JSON. GitHub-hosted or EPHEMERAL self-hosted only
+      # agent-prompt: .agents/agents/ticket-implementer.md
+      # ready-label: ready-for-agent
+      # claimed-label: agent-dispatched
+      # needs-human-label: needs-human
+      # owner-handle: your-github-login            # mentioned when an issue needs a human; default: repo owner
+      # dispatch-limit: 2
+      # setup-command: uv sync --frozen            # install dependencies before the agent runs
+      # extra-allowed-tools: "Bash(uv run pytest:*)"
+      # extra-protected-paths: "scripts/deploy* Makefile"
+      # An MCP server for the agent, off by default. Read-only tools only. ${MCP_TOKEN} is expanded at
+      # connect time from the MCP_TOKEN secret and is never written into the file.
+      # mcp-config: '{"mcpServers":{"kb":{"type":"http","url":"https://kb.example.com/mcp/","headers":{"Authorization":"Bearer ${MCP_TOKEN}"}}}}'
+      # mcp-allowed-tools: "mcp__kb__search"
+      # Optional: take the secrets from Infisical instead of GitHub secrets.
+      # secret-source: infisical
+      # infisical-domain: https://your-infisical-host
+      # infisical-project-slug: your-project
+    secrets:
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+      IMPLEMENTER_APP_ID: ${{ secrets.IMPLEMENTER_APP_ID }}
+      IMPLEMENTER_APP_PRIVATE_KEY: ${{ secrets.IMPLEMENTER_APP_PRIVATE_KEY }}
+      # MCP_TOKEN: ${{ secrets.MCP_TOKEN }}
+      # With secret-source: infisical, pass these four instead of the three above. The AGENT identity
+      # must be able to read only CLAUDE_CODE_OAUTH_TOKEN (and MCP_TOKEN); the other reads the App key:
+      # INFISICAL_AGENT_CLIENT_ID: ${{ secrets.INFISICAL_AGENT_CLIENT_ID }}
+      # INFISICAL_AGENT_CLIENT_SECRET: ${{ secrets.INFISICAL_AGENT_CLIENT_SECRET }}
+      # INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+      # INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}

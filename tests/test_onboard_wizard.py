@@ -100,8 +100,8 @@ def test_folder_defaults_match_the_workflow_inputs():
     assert f"INFISICAL_CLAUDE_PATH:-{inputs['infisical-claude-path']['default']}" in SCRIPT
     assert f"INFISICAL_GITHUB_PATH:-{inputs['infisical-github-path']['default']}" in SCRIPT
     assert f"INFISICAL_ENV_SLUG:-{inputs['infisical-env-slug']['default']}" in SCRIPT
-    assert f'DEFAULT_RESPONDER_LOGIN="{inputs['responder-bot-login']['default']}"' in SCRIPT
-    assert f'DEFAULT_RESPONDER_ID="{inputs['responder-bot-id']['default']}"' in SCRIPT
+    assert f'DEFAULT_RESPONDER_LOGIN="{inputs["responder-bot-login"]["default"]}"' in SCRIPT
+    assert f'DEFAULT_RESPONDER_ID="{inputs["responder-bot-id"]["default"]}"' in SCRIPT
     # the optional lines the wizard adds to the caller are real workflow inputs
     for name in re.findall(r"\\n {6}(infisical-[a-z-]+): ", SCRIPT):
         assert name in inputs

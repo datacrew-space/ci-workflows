@@ -228,7 +228,7 @@ VARIABLE_NAME="CLAUDE_REVIEW_ENABLED"
 # the App's own grant, so each list is the union over the tokens the workflow mints with that App.
 app_perms() {
   case "$1" in
-    ci-code-reviewer)        echo "contents:read pull-requests:write checks:read actions:read statuses:read" ;;
+    ci-code-reviewer)        echo "contents:read pull-requests:write issues:read checks:read actions:read statuses:read" ;;
     ci-review-responder)     echo "contents:write pull-requests:write issues:write checks:read actions:read statuses:read" ;;
     ci-review-orchestrator)  echo "statuses:write pull-requests:write issues:write" ;;
     *) return 1 ;;

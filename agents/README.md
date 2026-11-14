@@ -20,7 +20,7 @@ instead. The file is self-contained: it needs no skill and no other local file. 
 review in a session, for example "use the code-review-architect agent on PR 42". Edit the file to
 add your repository's own rules.
 
-## How it differs from the CI reviewer
+## How it differs from the review loop's reviewer
 
 | | `agents/code-review-architect.md` | [`examples/code-reviewer.md`](../examples/code-reviewer.md) |
 |---|---|---|
