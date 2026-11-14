@@ -1,0 +1,13 @@
+# Repository ruff rules. Ruff discovers this file; it extends the shared base copy.
+# Never write `select =` here: it would replace the base rule set. Add rules with `extend-select`.
+extend = "ruff-base.toml"
+
+# Extra directories ruff must not touch (the base already skips **/vendor/** and **/third_party/**).
+# extend-exclude = ["generated"]
+
+[lint]
+# extend-select = ["SIM", "RET"]
+
+# Grandfathered violations. This table may only shrink: fix a file, then delete its line.
+# [lint.extend-per-file-ignores]
+# "legacy/old_script.py" = ["T20"]

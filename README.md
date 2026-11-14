@@ -5,6 +5,10 @@ Reusable GitHub Actions workflows for an agentic software factory: the **Claude 
 `workflow_call` workflow you pin by commit SHA; nothing here names a host, an account or a secret store.
 See [Factory pieces](#factory-pieces) for the rest.
 
+Also here: the public-repo **guards** ([docs/guards.md](docs/guards.md)) and **Python CI for uv
+projects**, a reusable lint and test workflow plus base pre-commit and ruff configs
+([docs/python-ci.md](docs/python-ci.md), scaffold in [`examples/python-uv-repo/`](examples/python-uv-repo)).
+
 A pull request gets an independent review from a reviewer agent. If the reviewer asks for changes,
 a responder agent may push small fixes to the PR branch, and the PR is reviewed once more. The loop
 ends **green** (ready to merge) or **red** with a `needs-human` label. See the header of
