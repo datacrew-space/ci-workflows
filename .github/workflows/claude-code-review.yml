@@ -116,6 +116,13 @@ on:
         description: Path of the responder prompt. Read from the BASE branch, like reviewer-agent.
         type: string
         default: .agents/agents/review-responder.md
+      allowed-bots:
+        description: >-
+          Comma-separated logins (no `[bot]`) of EVERY other bot that opens or pushes PRs in the calling
+          repository, e.g. the issue dispatcher's app. The review responder is always allowed. A bot not
+          listed makes the review action refuse to start. Never `*`.
+        type: string
+        default: ""
     secrets:
       INFISICAL_CLIENT_ID:
         required: true
@@ -157,6 +164,17 @@ jobs:
         run: |
           if ! [[ "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]]; then
             echo "::error::base-branch must be a literal branch name ([A-Za-z0-9._/-]+)"
+            exit 1
+          fi
+
+      # allowed-bots goes into the action's allowed_bots list. Only named bot logins are accepted:
+      # never `*`, which would let any bot start a review.
+      - name: Validate the allowed-bots input
+        env:
+          ALLOWED_BOTS: ${{ inputs.allowed-bots }}
+        run: |
+          if [ -n "$ALLOWED_BOTS" ] && ! [[ "$ALLOWED_BOTS" =~ ^[A-Za-z0-9-]+(,[A-Za-z0-9-]+)*$ ]]; then
+            echo "::error::allowed-bots must be comma-separated bot logins ([A-Za-z0-9-]+), never '*'"
             exit 1
           fi
 
@@ -254,6 +272,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: read
           permission-pull-requests: read
+          permission-issues: read # the Spec axis reads the issue a PR closes; without it every review skips that axis
           permission-checks: read
           permission-actions: read
           permission-statuses: read # `gh pr checks` reads commit statuses too; read-only, so no forged verdict
@@ -281,7 +300,7 @@ jobs:
           # The responder's push re-triggers this workflow as a bot actor; the action refuses bot
           # actors unless they are listed here. Rounds are capped by the event sender: the review
           # after a responder push is round 2, the last (see the `verdict` step).
-          allowed_bots: ${{ inputs.responder-bot-login }}
+          allowed_bots: ${{ inputs.allowed-bots && format('{0},{1}', inputs.responder-bot-login, inputs.allowed-bots) || inputs.responder-bot-login }}
           # Read-only tools plus the gh/git calls a review needs, and writes ONLY under REVIEW_DIR.
           # The git rules have no `*`: Claude Code reads a rule without `*` as one exact command,
           # while `git diff:*` admitted `--output=FILE` and `git fetch:*` admitted `--upload-pack=CMD`
