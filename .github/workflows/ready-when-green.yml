@@ -1,0 +1,132 @@
+name: Ready when green (reusable)
+
+# A reusable workflow. An author that has finished adds the `ready-label` label to its draft PR; this
+# marks the PR ready once the `ci-check` check is green on its head, which starts the review loop
+# (claude-code-review.yml skips drafts and starts on ready_for_review). No label, no flip: early drafts
+# stay cheap. A stacked PR waits while the PR it is based on is still a draft.
+#
+# The decision is scripts/ready_when_green.py (tests/test_ready_when_green.py); this file only runs it
+# with an app token. It sweeps every open labelled draft, so one run covers all three triggers. The
+# caller owns them (examples/ready-when-green-caller.yml):
+#   - CI finished            (workflow_run)
+#   - the label was added    (pull_request_target: labeled)
+#   - a PR became ready      (pull_request_target: ready_for_review), which lets a stack cascade
+#
+# Why an app token: a PR marked ready with GITHUB_TOKEN starts no workflow, so the review would never
+# run. The app needs pull requests write and issues write (to remove the label), plus checks read and
+# statuses read (`gh pr list --json statusCheckRollup`).
+# Security: pull_request_target and workflow_run run the CALLER file from the default branch, and this
+# job checks out only this tooling repository at `tooling-ref`. PR code is never checked out, and no
+# event text reaches a shell command. The token is minted after that checkout.
+#
+# Secrets: READY_APP_ID and READY_APP_PRIVATE_KEY (plain GitHub secrets, the default), or
+# `secret-source: infisical` to fetch the same two names.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        default: '"ubuntu-latest"'
+      tooling-ref:
+        description: Ref (use a commit SHA) of this repository to take the script from
+        type: string
+        default: main
+      ready-label:
+        type: string
+        default: ready-for-review
+      ci-check:
+        description: Name of the check run or status that must be green
+        type: string
+        default: ci-ok
+      secret-source:
+        description: "`github` (plain secrets passed by the caller) or `infisical`"
+        type: string
+        default: github
+      infisical-domain:
+        type: string
+        default: ""
+      infisical-project-slug:
+        type: string
+        default: ""
+      infisical-env-slug:
+        type: string
+        default: prod
+      infisical-github-path:
+        type: string
+        default: /github
+    secrets:
+      READY_APP_ID:
+        required: false
+      READY_APP_PRIVATE_KEY:
+        required: false
+      INFISICAL_CLIENT_ID:
+        required: false
+      INFISICAL_CLIENT_SECRET:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  sweep:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout the script (this tooling repository, not the caller)
+        uses: actions/checkout@v4
+        with:
+          repository: datacrew-space/ci-workflows
+          ref: ${{ inputs.tooling-ref }}
+          path: ci-tooling
+          sparse-checkout: scripts/ready_when_green.py
+          persist-credentials: false
+
+      - name: Fetch READY_APP_ID from Infisical
+        if: ${{ inputs.secret-source == 'infisical' }}
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: "universal"
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          domain: ${{ inputs.infisical-domain }}
+          project-slug: ${{ inputs.infisical-project-slug }}
+          env-slug: ${{ inputs.infisical-env-slug }}
+          secret-path: ${{ inputs.infisical-github-path }}
+          secret-name: "READY_APP_ID"
+
+      - name: Fetch READY_APP_PRIVATE_KEY from Infisical
+        if: ${{ inputs.secret-source == 'infisical' }}
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: "universal"
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          domain: ${{ inputs.infisical-domain }}
+          project-slug: ${{ inputs.infisical-project-slug }}
+          env-slug: ${{ inputs.infisical-env-slug }}
+          secret-path: ${{ inputs.infisical-github-path }}
+          secret-name: "READY_APP_PRIVATE_KEY"
+
+      - name: Mint the token (mark ready, remove label)
+        id: token
+        uses: actions/create-github-app-token@v2.1.4
+        with:
+          app-id: ${{ secrets.READY_APP_ID || env.READY_APP_ID }}
+          private-key: ${{ secrets.READY_APP_PRIVATE_KEY || env.READY_APP_PRIVATE_KEY }}
+          repositories: ${{ github.event.repository.name }}
+          permission-pull-requests: write
+          permission-issues: write
+          permission-checks: read # gh pr list --json statusCheckRollup reads check runs
+          permission-statuses: read # ... and commit statuses; without these `gh pr list` can fail
+
+      - name: Mark labelled green drafts ready
+        env:
+          GH_TOKEN: ${{ steps.token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+          READY_LABEL: ${{ inputs.ready-label }}
+          CI_CHECK: ${{ inputs.ci-check }}
+        shell: bash # pipefail: a failed flip fails the job even through tee
+        run: python3 -I ci-tooling/scripts/ready_when_green.py | tee -a "$GITHUB_STEP_SUMMARY"

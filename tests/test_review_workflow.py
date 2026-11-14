@@ -33,9 +33,17 @@ def step(job: dict, step_id: str) -> dict:
 def test_review_step_accepts_the_responder_as_a_bot_actor(jobs):
     """Without this the round-2 review fails on the responder's own push and never escalates."""
     allowed = step(jobs["claude-review"], "claude-review")["with"]["allowed_bots"]
-    assert allowed == "${{ inputs.responder-bot-login }}"
+    # The caller's `allowed-bots` input only ADDS bots: the responder login is in both branches of the expression.
+    assert allowed.count("inputs.responder-bot-login") == 2
+    assert "inputs.allowed-bots" in allowed
+    assert "'*'" not in allowed
     # and the input's default is the responder App every existing caller already uses
     assert ON_INPUTS["responder-bot-login"]["default"] == "ci-review-responder"
+
+
+def test_allowed_bots_is_an_input_that_defaults_to_no_extra_bots():
+    """A bot that opens or pushes PRs (e.g. the issue dispatcher) must be listed or its review fails to start."""
+    assert ON_INPUTS["allowed-bots"]["default"] == ""
 
 
 def test_the_responder_commit_author_comes_from_the_inputs_not_a_hardcoded_id(jobs):

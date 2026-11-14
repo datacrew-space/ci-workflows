@@ -42,7 +42,7 @@ other permission at *No access*, turn the webhook off, and install on the target
 
 | App | Repository permissions |
 |-----|------------------------|
-| `ci-code-reviewer` | Contents: read. Pull requests: read and write. Checks: read. Actions: read. Commit statuses: read |
+| `ci-code-reviewer` | Contents: read. Pull requests: read and write. Issues: read. Checks: read. Actions: read. Commit statuses: read |
 | `ci-review-responder` | Contents: read and write. Pull requests: read and write. Issues: read and write. Checks: read. Actions: read. Commit statuses: read |
 | `ci-review-orchestrator` | Commit statuses: read and write. Pull requests: read and write. Issues: read and write |
 
