@@ -1,0 +1,193 @@
+name: Python CI (reusable)
+
+# Lint (pre-commit on all files) and test (uv + pytest) for a Python project that uses uv. Call it from
+# a thin workflow; see docs/python-ci.md and examples/python-uv-repo/.
+#
+# This workflow has NO `ci-ok` gate job, on purpose. A job of a called workflow is reported as
+# `<caller job> / <job>`, so a gate defined here would rename the required status check in every
+# caller. The caller defines its own `ci-ok` job that `needs` the call (and any repo-specific jobs).
+#
+# Runner: `runs-on` is a JSON string (a label or an array of labels), because `workflow_call` inputs
+# cannot be arrays. Callers that cannot use GitHub-hosted runners (billing, policy) pass a repository
+# variable, e.g. `runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}`.
+#
+# Lint always runs at the repository root, where `.pre-commit-config.yaml` lives. Test runs in
+# `working-directory`. Pin the caller's `uses:` ref and `config-ref` to the same commit SHA.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: JSON runner label or label array for both jobs, e.g. '"ubuntu-latest"' or '["self-hosted","linux"]'.
+        type: string
+        default: '"ubuntu-latest"'
+      python-version:
+        description: Python version for uv.
+        type: string
+        default: "3.13"
+      uv-version:
+        description: uv version to install (pinned so runs are reproducible).
+        type: string
+        default: "0.13.7"
+      pre-commit-version:
+        description: pre-commit version to run with uvx.
+        type: string
+        default: "4.7.0"
+      working-directory:
+        description: Directory of the uv project (pyproject.toml and uv.lock) for the test job.
+        type: string
+        default: "."
+      sync-args:
+        description: Arguments for `uv sync`. `--locked` fails when uv.lock is out of date.
+        type: string
+        default: "--locked --dev"
+      pytest-args:
+        description: Arguments for pytest.
+        type: string
+        default: "-q --tb=short"
+      skip-hooks:
+        description: Comma-separated pre-commit hook ids to skip in CI (value of SKIP), e.g. hooks the test job already runs.
+        type: string
+        default: ""
+      config-ref:
+        description: >-
+          Commit of datacrew-space/ci-workflows whose configs/ruff-base.toml the lint job compares the
+          repository's copy against. Empty skips the drift check.
+        type: string
+        default: ""
+      ruff-base-path:
+        description: Path of the repository's copy of ruff-base.toml, checked when config-ref is set.
+        type: string
+        default: "ruff-base.toml"
+
+permissions:
+  contents: read
+
+env:
+  # A flaky network should not fail a build: uv retries, and waits longer for a slow mirror.
+  UV_HTTP_RETRIES: "8"
+  UV_HTTP_TIMEOUT: "60"
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 15
+    env:
+      SKIP: ${{ inputs.skip-hooks }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The shared ruff rules are copied into each repository (ruff cannot extend a URL). This step
+      # runs first, so a drifted copy is reported even when a hook fails. It fails when the copy
+      # differs from the pinned upstream version, so it cannot drift unnoticed.
+      - name: Check ruff-base.toml against the pinned upstream copy
+        if: inputs.config-ref != ''
+        env:
+          CONFIG_REF: ${{ inputs.config-ref }}
+          RUFF_BASE_PATH: ${{ inputs.ruff-base-path }}
+        run: |
+          set -eu
+          case "$CONFIG_REF" in
+            *[!0-9a-f]*|"") bad=1 ;;
+            *) if [ "${#CONFIG_REF}" -eq 40 ]; then bad=0; else bad=1; fi ;;
+          esac
+          if [ "$bad" -ne 0 ]; then
+            echo "::error::config-ref must be a full 40-character commit SHA." >&2
+            exit 1
+          fi
+          git init -q "$RUNNER_TEMP/ci-config"
+          git -C "$RUNNER_TEMP/ci-config" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$CONFIG_REF"
+          git -C "$RUNNER_TEMP/ci-config" checkout -q FETCH_HEAD
+          if ! diff -u "$RUNNER_TEMP/ci-config/configs/ruff-base.toml" "$RUFF_BASE_PATH"; then
+            echo "::error::${RUFF_BASE_PATH} differs from configs/ruff-base.toml at the pinned config-ref. Copy the pinned file over it and put repository rules in ruff.toml." >&2
+            exit 1
+          fi
+
+      # Keep scratch files off /tmp, which is small or shared on some self-hosted runners.
+      - name: Use the runner temp directory for scratch files
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ inputs.python-version }}
+          # A self-hosted runner keeps its own cache; the hosted cache would only add upload time.
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
+
+      # Hosted runners start empty, so the cache pays off there. A self-hosted runner keeps
+      # ~/.cache/pre-commit between runs and would only add upload time.
+      - name: Cache pre-commit hook environments
+        if: runner.environment == 'github-hosted'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ inputs.python-version }}-${{ inputs.pre-commit-version }}-${{ hashFiles('.pre-commit-config.yaml') }}
+
+      # Installing hook environments clones repositories and can hit a transient network error, so
+      # retry that. The hook run itself is never retried: a failing hook must fail the job.
+      - name: Install hook environments
+        env:
+          PRE_COMMIT_VERSION: ${{ inputs.pre-commit-version }}
+        run: |
+          for attempt in 1 2 3 4; do
+            if uvx "pre-commit@${PRE_COMMIT_VERSION}" install-hooks; then exit 0; fi
+            echo "install-hooks attempt ${attempt} failed" >&2
+            sleep $((attempt * 10))
+          done
+          exit 1
+
+      - name: Run pre-commit on all files
+        env:
+          PRE_COMMIT_VERSION: ${{ inputs.pre-commit-version }}
+        run: uvx "pre-commit@${PRE_COMMIT_VERSION}" run --all-files --show-diff-on-failure --color always
+
+  test:
+    name: test
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Use the runner temp directory for scratch files
+        run: |
+          echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ inputs.python-version }}
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
+          cache-dependency-glob: ${{ inputs.working-directory }}/uv.lock
+
+      - name: Sync the locked environment
+        env:
+          SYNC_ARGS: ${{ inputs.sync-args }}
+        run: |
+          # shlex splits like a shell would (quotes allowed) without evaluating the value. A value it
+          # cannot parse fails the step: silently dropping arguments would drop `--locked`.
+          parsed=$(uv run --no-project python -c 'import shlex,sys; print(*shlex.split(sys.argv[1]), sep=chr(10))' "$SYNC_ARGS") || { echo "::error::cannot parse the sync-args input" >&2; exit 1; }
+          args=()
+          if [ -n "$parsed" ]; then mapfile -t args <<<"$parsed"; fi
+          uv sync "${args[@]}"
+
+      - name: Run pytest
+        env:
+          PYTEST_ARGS: ${{ inputs.pytest-args }}
+        run: |
+          parsed=$(uv run --no-project python -c 'import shlex,sys; print(*shlex.split(sys.argv[1]), sep=chr(10))' "$PYTEST_ARGS") || { echo "::error::cannot parse the pytest-args input" >&2; exit 1; }
+          args=()
+          if [ -n "$parsed" ]; then mapfile -t args <<<"$parsed"; fi
+          uv run --no-sync python -m pytest "${args[@]}"

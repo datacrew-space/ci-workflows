@@ -1,0 +1,58 @@
+# Caller for the shared Python CI. Copy to .github/workflows/ci.yml.
+# Pin `uses:` and `config-ref` to the same reviewed commit SHA of datacrew-space/ci-workflows
+# (replace both <commit-sha> placeholders). A bump is then one reviewed change per repository.
+name: CI
+
+on:
+  # No `branches` filter on pull_request: a stacked PR (whose base is another PR branch) must also get
+  # `ci-ok`, or a required check that never reports blocks it.
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  python:
+    uses: datacrew-space/ci-workflows/.github/workflows/python-ci.yml@<commit-sha>
+    with:
+      # GitHub-hosted runners by default. If your account cannot use them (for example billing is
+      # blocked), set the repository variable CI_RUNS_ON to a JSON label such as '["self-hosted","linux"]'.
+      runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}
+      # working-directory: path/to/uv-project   # when pyproject.toml is not at the repository root
+      config-ref: <commit-sha>
+
+  # Add repository-specific jobs here and list them in `needs` below.
+
+  # The single required status check. It lives in the caller, not in the reusable workflow, so the
+  # check name stays `ci-ok`. `if: always()` runs it even when a needed job failed, where a skipped
+  # gate would count as a pass for branch protection. A job skipped on purpose does not fail it.
+  ci-ok:
+    name: ci-ok
+    needs: [python]
+    if: always()
+    # The gate must run wherever the other jobs run, or it never starts and blocks every PR.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    steps:
+      - name: Fail if any needed job failed or was cancelled
+        env:
+          # One line per needed job: add `<name>=<result>` here when you add a job to `needs`.
+          RESULTS: |
+            python=${{ needs.python.result }}
+        run: |
+          failed=""
+          while IFS='=' read -r job result; do
+            case "$result" in failure|cancelled) failed="$failed $job($result)" ;; esac
+          done <<<"$RESULTS"
+          if [ -n "$failed" ]; then
+            echo "::error::Not green:${failed}"
+            exit 1
+          fi
+          echo "All needed jobs passed."
