@@ -20,7 +20,7 @@ name: Claude Code Review (reusable)
 # Everything environment-specific is an input or a secret of the CALLER: the secret store
 # coordinates, the runner labels, the agent prompt paths. Nothing here names a host or an account.
 # The helper scripts (guard, scanner, report) are NOT read from the repository under review: the
-# `tooling` step checks out THIS repository at `tooling-ref`, so a PR can never weaken the gate that
+# `Locate the tooling` step fetches THIS repository at `tooling-ref`, so a PR can never weaken the gate that
 # grades it. Pin `tooling-ref` and the `uses:` ref to the same commit SHA.
 #
 # The caller supplies, in its secret store (Infisical): CLAUDE_CODE_OAUTH_TOKEN under
@@ -179,16 +179,19 @@ jobs:
           fi
 
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
-      - name: Fetch the review-loop tooling
-        uses: actions/checkout@v7
-        with:
-          repository: datacrew-space/ci-workflows
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ runner.temp }}/ci-tooling
-          persist-credentials: false
-
+      # actions/checkout only accepts a path inside the workspace, and the workspace is where the agent
+      # may write, so the tooling is fetched by hand into the runner temp dir. The repository is public:
+      # no credentials are needed or sent. TOOLING is defined here, once per job.
       - name: Locate the tooling
-        run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
 
       # The prompt the agent follows comes from the BASE branch, never from this PR: a PR that edits
       # its own agent file would otherwise change how it is reviewed. Validated, then copied out of
@@ -565,16 +568,19 @@ jobs:
           fi
 
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
-      - name: Fetch the review-loop tooling
-        uses: actions/checkout@v7
-        with:
-          repository: datacrew-space/ci-workflows
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ runner.temp }}/ci-tooling
-          persist-credentials: false
-
+      # actions/checkout only accepts a path inside the workspace, and the workspace is where the agent
+      # may write, so the tooling is fetched by hand into the runner temp dir. The repository is public:
+      # no credentials are needed or sent. TOOLING is defined here, once per job.
       - name: Locate the tooling
-        run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
 
       - name: Checkout the reviewed commit
         uses: actions/checkout@v7
@@ -737,16 +743,19 @@ jobs:
     steps:
       # The reviewed commit (not the branch tip), no stored credentials; contains no agent output.
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
-      - name: Fetch the review-loop tooling
-        uses: actions/checkout@v7
-        with:
-          repository: datacrew-space/ci-workflows
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ runner.temp }}/ci-tooling
-          persist-credentials: false
-
+      # actions/checkout only accepts a path inside the workspace, and the workspace is where the agent
+      # may write, so the tooling is fetched by hand into the runner temp dir. The repository is public:
+      # no credentials are needed or sent. TOOLING is defined here, once per job.
       - name: Locate the tooling
-        run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
 
       - name: Checkout the reviewed commit
         uses: actions/checkout@v7
@@ -855,16 +864,19 @@ jobs:
       contents: read
     steps:
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
-      - name: Fetch the review-loop tooling
-        uses: actions/checkout@v7
-        with:
-          repository: datacrew-space/ci-workflows
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ runner.temp }}/ci-tooling
-          persist-credentials: false
-
+      # actions/checkout only accepts a path inside the workspace, and the workspace is where the agent
+      # may write, so the tooling is fetched by hand into the runner temp dir. The repository is public:
+      # no credentials are needed or sent. TOOLING is defined here, once per job.
       - name: Locate the tooling
-        run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
 
       - name: Fetch CI_REVIEW_ORCHESTRATOR_APP_ID
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18

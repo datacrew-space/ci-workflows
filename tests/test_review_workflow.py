@@ -504,3 +504,22 @@ def test_the_push_job_never_runs_on_the_agents_runner(jobs):
 def test_the_orchestrator_key_is_still_only_in_the_report_job(jobs):
     names = {n for n, job in jobs.items() for s in job["steps"] if "ORCHESTRATOR" in str(s.get("with", {}))}
     assert names == {"report"}
+
+
+def test_tooling_is_never_checked_out_with_actions_checkout_outside_the_workspace(jobs):
+    """actions/checkout rejects a path outside the workspace, so a caller run died in setup.
+
+    The tooling is fetched by hand into the runner temp dir (also keeps it out of the agent's
+    writable workspace), in every job that uses it, with the path defined once per job.
+    """
+    for name, job in jobs.items():
+        for s in job["steps"]:
+            if str(s.get("uses", "")).startswith("actions/checkout"):
+                assert "ci-tooling" not in str(s.get("with", {})), name
+                assert "runner.temp" not in str(s.get("with", {}).get("path", "")), name
+        runs = [s for s in job["steps"] if s.get("name") == "Locate the tooling"]
+        if any("$TOOLING" in str(s.get("run", "")) for s in job["steps"]):
+            assert len(runs) == 1, name
+            run = runs[0]["run"]
+            assert run.count("ci-tooling") == 1 and 'echo "TOOLING=$tooling" >> "$GITHUB_ENV"' in run
+            assert "fetch -q --depth 1" in run and "persist" not in run
