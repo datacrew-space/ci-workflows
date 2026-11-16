@@ -1,0 +1,7 @@
+# Python bytecode, written by running the scripts or the tests.
+__pycache__/
+*.py[cod]
+
+# Tool caches. pytest and ruff also ignore their own, this keeps it in one place.
+.pytest_cache/
+.ruff_cache/
