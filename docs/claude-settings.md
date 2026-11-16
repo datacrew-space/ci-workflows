@@ -13,7 +13,8 @@
 - A `SessionStart` hook on `compact` that prints `hooks/after-compact.md`, a reminder to re-read the handoff
   and re-check state before continuing.
 
-The two text files live in `configs/claude/hooks/` and are copied to `<claude-dir>/hooks/`.
+The two text files live in `configs/claude/hooks/` and are copied to `<claude-dir>/hooks/`. The hook commands
+read them from `${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/`, so they follow `CLAUDE_CONFIG_DIR` when it is set.
 
 ## Run it
 
@@ -23,16 +24,30 @@ python scripts/bootstrap_claude_settings.py            # dry run: prints a diff,
 python scripts/bootstrap_claude_settings.py --apply    # backs up settings.json, then writes it
 ```
 
-It needs only Python 3 and the standard library. `--claude-dir` changes the target (default `~/.claude`).
+It needs only Python 3 and the standard library; use `python3` where `python` is not on the path.
+`--claude-dir` changes the target. The default is `$CLAUDE_CONFIG_DIR` when that is set, else `~/.claude`.
 
 Merge rules:
 
-- Keys the base does not name are never touched, and existing hooks stay. Hook groups are appended only when
-  an equal group is not already there, so a second run changes nothing and writes no new backup.
-- A different value you already have for a key the base names is kept and reported. `--force` takes the base
-  value instead. The same goes for a hook file in `<claude-dir>/hooks/` whose content differs.
-- A missing settings file is created. A settings file or overlay that is not valid JSON stops the script with
-  an error before anything is written.
+- The base and any overlays are composed into one fragment first (a later fragment wins over an earlier one),
+  and only that fragment is merged into your file. "kept your value" therefore always means a value that was
+  in your file.
+- Keys the fragment does not name are never touched, and existing hooks stay. A second run changes nothing and
+  writes no new backup.
+- A different value you already have for a key the fragment names is kept and reported. `--force` takes the
+  fragment's value instead. The same goes for a hook file in `<claude-dir>/hooks/` whose content differs.
+- Hook groups: one of yours counts as the shared group when it has the same `matcher` (none equals none) and one
+  of its commands prints the same `hooks/<file>.md`. If it is identical, nothing happens. If it differs it is a
+  conflict: kept and reported, and `--force` replaces it in place, leaving one group. Your other groups under the
+  same event are never touched. A machine set up by an earlier version of this script, whose hook commands
+  say `~/.claude/hooks/...`, therefore reports a conflict for the two hook groups until you run it with `--force`.
+- A symlinked settings file is written through to its target, and the link stays. The backup goes beside the
+  target. The file's line endings (CRLF or LF) and, on POSIX, its mode are kept. A UTF-8 BOM is accepted on read
+  and not written back.
+- The script builds the whole plan and checks it first (inputs, the hooks directory, the settings path), then
+  writes the hook files and the settings file last. If any check fails it exits 1 and writes nothing. That
+  includes invalid JSON, a directory at the settings path, and a hooks path that is not a usable directory.
+- A missing settings file is created.
 
 ## Settings that cannot live in a public repository
 

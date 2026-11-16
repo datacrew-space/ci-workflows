@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -21,13 +23,9 @@ import bootstrap_claude_settings as bcs  # noqa: E402
 OTHER_HOOK = {"hooks": [{"type": "command", "command": "echo mine"}]}
 
 
-def run(claude_dir: Path, *args: str) -> subprocess.CompletedProcess:
-    return subprocess.run(
-        [sys.executable, str(SCRIPT), "--claude-dir", str(claude_dir), *args],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-    )
+def run(claude_dir: Path | None, *args: str, env: dict | None = None) -> subprocess.CompletedProcess:
+    cmd = [sys.executable, str(SCRIPT), *(["--claude-dir", str(claude_dir)] if claude_dir else []), *args]
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", env=env)
 
 
 def write_settings(claude_dir: Path, data) -> Path:
@@ -185,3 +183,207 @@ def test_invalid_json_raises_named_exception(tmp_path):
     bad.write_text("{", encoding="utf-8")
     with pytest.raises(bcs.SettingsFileError):
         bcs.load_json_object(bad)
+
+
+# --- review follow-up (issue #33) ---
+
+WINDOW = "CLAUDE_CODE_AUTO_COMPACT_WINDOW"
+
+
+def write_overlay(tmp_path: Path, data: dict, name: str = "overlay.json") -> Path:
+    path = tmp_path / name
+    path.write_text(json.dumps(data), encoding="utf-8")
+    return path
+
+
+def hook_group(command: str, matcher: str | None = None) -> dict:
+    group = {"hooks": [{"type": "command", "shell": "bash", "command": command}]}
+    return {"matcher": matcher, **group} if matcher is not None else group
+
+
+def test_overlay_value_wins_over_base_on_fresh_dir_without_kept_line(tmp_path):
+    claude_dir = tmp_path / "c"
+    overlay = write_overlay(tmp_path, {"env": {WINDOW: "90k"}})
+    result = run(claude_dir, "--apply", "--overlay", str(overlay))
+    assert result.returncode == 0, result.stderr
+    assert load(claude_dir / "settings.json")["env"][WINDOW] == "90k"
+    assert "kept your value" not in result.stdout
+
+
+def test_users_own_value_is_kept_whichever_fragment_names_the_key(tmp_path):
+    claude_dir = tmp_path / "c"
+    path = write_settings(claude_dir, {"env": {WINDOW: "10k", "EXTRA": "mine"}})
+    overlay = write_overlay(tmp_path, {"env": {WINDOW: "90k", "EXTRA": "theirs"}})
+    result = run(claude_dir, "--apply", "--overlay", str(overlay))
+    assert result.returncode == 0, result.stderr
+    assert load(path)["env"] == {WINDOW: "10k", "EXTRA": "mine"}
+    assert "kept your value for env.EXTRA" in result.stdout
+    assert f"kept your value for env.{WINDOW}" in result.stdout
+    assert run(claude_dir, "--apply", "--force", "--overlay", str(overlay)).returncode == 0
+    assert load(path)["env"] == {WINDOW: "90k", "EXTRA": "theirs"}
+
+
+def test_overlay_hook_group_for_same_hook_file_replaces_base_group(tmp_path):
+    overlay = write_overlay(tmp_path, {"hooks": {"PreCompact": [hook_group("cat hooks/compact-instructions.md # x")]}})
+    plan = bcs.build_plan(tmp_path / "c", [overlay], force=False)
+    groups = plan.merged["hooks"]["PreCompact"]
+    assert len(groups) == 1 and groups[0]["hooks"][0]["command"].endswith("# x")
+    assert plan.conflicts == []
+
+
+def test_dry_run_with_non_ascii_settings_and_redirected_stdout_under_non_utf8_locale(tmp_path):
+    claude_dir = tmp_path / "c"
+    write_settings(claude_dir, {"note": "café 日本語"})
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONIOENCODING", "PYTHONUTF8", "LANG", "LC_ALL")}
+    env.update(PYTHONUTF8="0", LC_ALL="C", PYTHONCOERCECLOCALE="0")
+    out = tmp_path / "out.txt"
+    overlay = write_overlay(tmp_path, {"n": "日"})
+    with out.open("wb") as handle:
+        proc = subprocess.run(
+            [sys.executable, str(SCRIPT), "--claude-dir", str(claude_dir), "--overlay", str(overlay)],
+            stdout=handle,
+            stderr=subprocess.PIPE,
+            env=env,
+        )
+    assert proc.returncode == 0, proc.stderr.decode("utf-8", "replace")
+    assert "日" in out.read_bytes().decode("utf-8")
+
+
+def test_apply_on_symlinked_settings_updates_target_and_keeps_link(tmp_path):
+    real = tmp_path / "dotfiles" / "settings.json"
+    real.parent.mkdir()
+    real.write_text(json.dumps({"model": "opus"}), encoding="utf-8")
+    claude_dir = tmp_path / "c"
+    claude_dir.mkdir()
+    link = claude_dir / "settings.json"
+    try:
+        link.symlink_to(real)
+    except (OSError, NotImplementedError) as exc:
+        pytest.skip(f"cannot create symlinks here: {exc}")
+    result = run(claude_dir, "--apply")
+    assert result.returncode == 0, result.stderr
+    assert link.is_symlink()
+    assert load(real)["env"] == BASE["env"] and load(real)["model"] == "opus"
+    assert list(real.parent.glob("settings.json.*.bak")) and not list(claude_dir.glob("settings.json.*"))
+
+
+def test_default_claude_dir_follows_claude_config_dir(tmp_path):
+    target = tmp_path / "cfg"
+    env = {**os.environ, "CLAUDE_CONFIG_DIR": str(target)}
+    result = run(None, "--apply", env=env)
+    assert result.returncode == 0, result.stderr
+    assert load(target / "settings.json") == BASE
+    assert (target / "hooks" / "after-compact.md").is_file()
+    assert bcs.default_claude_dir({"CLAUDE_CONFIG_DIR": ""}) == Path("~/.claude").expanduser()
+
+
+@pytest.mark.skipif(shutil.which("bash") is None, reason="needs bash")
+@pytest.mark.parametrize("with_var", [True, False])
+def test_hook_commands_read_from_config_dir_or_home_default(tmp_path, with_var):
+    home = tmp_path / "home"
+    cfg = tmp_path / "cfg"
+    env = {k: v for k, v in os.environ.items() if k != "CLAUDE_CONFIG_DIR"}
+    env["HOME"] = str(home)
+    where = cfg if with_var else home / ".claude"
+    if with_var:
+        env["CLAUDE_CONFIG_DIR"] = str(cfg)
+    assert run(where, "--apply", env=env).returncode == 0
+    commands = [g["hooks"][0]["command"] for groups in BASE["hooks"].values() for g in groups]
+    assert commands and all("${CLAUDE_CONFIG_DIR:-$HOME/.claude}" in c for c in commands)
+    for command in commands:
+        done = subprocess.run(["bash", "-c", command], capture_output=True, env=env)
+        assert done.returncode == 0, done.stderr
+        assert done.stdout.strip()
+
+
+OLD_PRE = hook_group("cat ~/.claude/hooks/compact-instructions.md")
+OLD_START = hook_group("cat ~/.claude/hooks/after-compact.md", matcher="compact")
+
+
+def test_differing_shared_hook_group_is_kept_and_reported_force_replaces_in_place(tmp_path):
+    mine = {"hooks": {"PreCompact": [OTHER_HOOK, OLD_PRE], "SessionStart": [OLD_START, OTHER_HOOK]}}
+    path = write_settings(tmp_path, mine)
+    result = run(tmp_path, "--apply")
+    assert result.returncode == 0, result.stderr
+    assert load(path)["hooks"] == mine["hooks"]
+    assert "kept your value for hooks.PreCompact" in result.stdout
+    assert "kept your value for hooks.SessionStart" in result.stdout
+    assert run(tmp_path, "--apply", "--force").returncode == 0
+    hooks = load(path)["hooks"]
+    assert hooks["PreCompact"] == [OTHER_HOOK, *BASE["hooks"]["PreCompact"]]
+    assert hooks["SessionStart"] == [*BASE["hooks"]["SessionStart"], OTHER_HOOK]
+    assert run(tmp_path, "--apply").stdout.count("kept your value") == 0
+
+
+def test_hook_group_with_different_matcher_is_not_the_shared_group(tmp_path):
+    other = hook_group("cat ~/.claude/hooks/after-compact.md", matcher="startup")
+    path = write_settings(tmp_path, {"hooks": {"SessionStart": [other]}})
+    result = run(tmp_path, "--apply")
+    assert result.returncode == 0 and "kept your value" not in result.stdout
+    assert load(path)["hooks"]["SessionStart"] == [other, *BASE["hooks"]["SessionStart"]]
+
+
+def test_unusable_hooks_destination_exits_nonzero_and_leaves_settings_byte_identical(tmp_path):
+    path = write_settings(tmp_path, unrelated())
+    before = path.read_bytes()
+    (tmp_path / "hooks").write_text("i am a file", encoding="utf-8")
+    result = run(tmp_path, "--apply")
+    assert result.returncode != 0
+    assert "hooks" in result.stderr
+    assert path.read_bytes() == before
+    assert backups(tmp_path) == []
+    with pytest.raises(bcs.SettingsFileError):
+        bcs.build_plan(tmp_path, [], force=False)
+
+
+def test_hook_file_path_that_is_a_directory_stops_the_run_before_any_write(tmp_path):
+    path = write_settings(tmp_path, unrelated())
+    before = path.read_bytes()
+    (tmp_path / "hooks" / "after-compact.md").mkdir(parents=True)
+    assert run(tmp_path, "--apply").returncode != 0
+    assert path.read_bytes() == before
+    assert not (tmp_path / "hooks" / "compact-instructions.md").exists()
+
+
+def test_settings_with_bom_is_accepted_and_written_without_bom(tmp_path):
+    path = tmp_path / "settings.json"
+    path.write_bytes(b"\xef\xbb\xbf" + json.dumps({"model": "opus"}).encode("utf-8"))
+    result = run(tmp_path, "--apply")
+    assert result.returncode == 0, result.stderr
+    assert not path.read_bytes().startswith(b"\xef\xbb\xbf")
+    assert load(path)["model"] == "opus"
+
+
+def test_crlf_settings_stay_crlf_and_dry_run_diff_shows_only_real_changes(tmp_path):
+    path = tmp_path / "settings.json"
+    text = json.dumps({"model": "opus", "env": {WINDOW: "250k"}}, indent=2) + "\n"
+    path.write_bytes(text.replace("\n", "\r\n").encode("utf-8"))
+    dry = run(tmp_path)
+    assert dry.returncode == 0, dry.stderr
+    changed = [line for line in dry.stdout.splitlines() if line[:1] in "+-" and line[:3] not in ("+++", "---")]
+    assert changed and not any('"model"' in line or "250k" in line for line in changed)
+    assert run(tmp_path, "--apply").returncode == 0
+    raw = path.read_bytes()
+    assert raw.count(b"\r\n") == raw.count(b"\n") > 3
+
+
+def test_directory_at_settings_path_gives_clear_error(tmp_path):
+    (tmp_path / "settings.json").mkdir()
+    result = run(tmp_path, "--apply")
+    assert result.returncode == 1
+    assert "settings.json" in result.stderr and "Traceback" not in result.stderr
+
+
+@pytest.mark.skipif(os.name != "posix", reason="POSIX file modes")
+def test_existing_file_mode_is_preserved(tmp_path):
+    path = write_settings(tmp_path, unrelated())
+    path.chmod(0o640)
+    assert run(tmp_path, "--apply").returncode == 0
+    assert path.stat().st_mode & 0o777 == 0o640
+
+
+def test_plan_builder_checks_everything_without_writing(tmp_path):
+    claude_dir = tmp_path / "c"
+    plan = bcs.build_plan(claude_dir, [], force=False)
+    assert plan.settings_changed and not claude_dir.exists()
+    assert {p.name for p in plan.hook_plans} == set(HOOK_FILES)
