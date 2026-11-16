@@ -246,3 +246,7 @@ pip install pytest pyyaml
 python -m pytest tests -q
 bash tests/test-classify-claude-review.sh   # needs jq
 ```
+
+## Claude Code settings
+
+Shared user settings and a bootstrap script to apply them: [`docs/claude-settings.md`](docs/claude-settings.md).
