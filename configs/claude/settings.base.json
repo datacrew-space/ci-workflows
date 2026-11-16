@@ -1,5 +1,5 @@
 {
-  "env": { "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "150k" },
+  "env": { "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "250k" },
   "hooks": {
     "PreCompact": [
       { "hooks": [ { "type": "command", "shell": "bash", "command": "cat ~/.claude/hooks/compact-instructions.md" } ] }

@@ -98,7 +98,7 @@ def test_differing_value_is_kept_and_reported_force_replaces_it(tmp_path):
     assert "env.CLAUDE_CODE_AUTO_COMPACT_WINDOW" in result.stdout and "kept" in result.stdout
     forced = run(tmp_path, "--apply", "--force")
     assert forced.returncode == 0, forced.stderr
-    assert load(path)["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "150k"
+    assert load(path)["env"]["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "250k"
 
 
 def test_invalid_json_exits_nonzero_and_writes_nothing(tmp_path):

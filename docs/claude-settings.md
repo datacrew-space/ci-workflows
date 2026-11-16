@@ -5,8 +5,8 @@
 
 ## What the base sets
 
-- `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = "150k"`: compacts the conversation earlier, so a long session stays
-  inside a window the model handles well.
+- `env.CLAUDE_CODE_AUTO_COMPACT_WINDOW = "250k"`: 150k was tried first and compacted repeatedly before tasks
+  finished; 250k lets a typical task complete in one window.
 - A `PreCompact` hook that prints `hooks/compact-instructions.md`. Claude Code uses that text as the
   instructions for the compaction summary, which turns the summary into a handoff for a session that has none
   of the conversation.
