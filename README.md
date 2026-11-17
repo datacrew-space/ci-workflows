@@ -72,7 +72,7 @@ checked out from this repository at `tooling-ref`, never from the repository bei
 |---|---|
 | Issue dispatcher | Partly validated live; see below |
 | Ready when green | **Never run live**; unit-tested only |
-| Letta Code | Structure-tested only; the shared workflow has **never run live** |
+| Letta Code | Decision step tested by running it; **never run live** |
 | Work status script | Unit-tested against canned `gh` output |
 | Claude Code hooks (examples) | Unit-tested; used in interactive sessions before being ported here |
 
@@ -180,37 +180,57 @@ unverified.
 
 ### Letta Code (`letta-code.yml`)
 
-**What it does.** Lets people summon a Letta agent on an issue or pull request. The agent acts when a
-comment or body contains the trigger phrase (default `@letta-code`) or the trigger label (default
-`letta-code`) is added; any other event ends in a few seconds without calling it.
+**What it does.** Lets a maintainer summon a Letta agent. Three things summon it:
+
+- the trigger phrase (default `@letta-code`) in an issue comment, a pull request comment or a pull
+  request review comment;
+- a new issue whose title or body contains the phrase;
+- the trigger label (default `letta-code`) added to an **issue**.
+
+A pull request body, a label on a pull request and a push never summon it: the action at the pinned
+commit has no trigger for them.
 
 **Off by default.** The caller's job runs only when the repository variable `LETTA_CODE_ENABLED` is
 `true`. With it on but no `LETTA_API_KEY` secret or no `agent-id`, the job reports and skips the agent.
 
 **Setup.** Copy [`examples/letta-code-caller.yml`](examples/letta-code-caller.yml), pin the SHA, store
-the `LETTA_API_KEY` secret, set the `LETTA_AGENT_ID` variable, then set `LETTA_CODE_ENABLED=true`.
+the `LETTA_API_KEY` secret, set the `LETTA_AGENT_ID` variable, then set `LETTA_CODE_ENABLED=true`. The
+runner needs npm.
 
 **Inputs.** `runs-on`, `agent-id`, `trigger-phrase`, `label-trigger`.
 
+**Who may summon it.** One step decides, before the action starts: the comment's or issue's author must
+be an owner, member or collaborator of the repository and the phrase must be present, or the label
+added must be the trigger label. Everything else ends in a few seconds with a green run and no agent.
+The gate is there because the action checks write access before it looks for a trigger and **fails**
+the job for anyone without it, so on a public repository every outside comment would otherwise be a
+red run. The action still has the last word: a collaborator with less than write access, or a
+triage-role user adding the label, passes the gate and fails in the action.
+
 **Things to know.**
 
-- The job starts on every comment, and the action decides whether a trigger is present. Each comment
-  with no trigger still costs a runner for a few seconds.
-- The check is named `<caller job> / letta`. If you make it a required check, keep `synchronize` and
-  `reopened` in the caller's triggers so every new head gets a run; on those events the job reports
-  and skips the agent. A repository that already requires a check called `letta` must update its
-  required checks when it moves to this workflow.
-- While the variable is off the caller's job is skipped. GitHub counts a skipped job as passing a
-  required check.
+- The job starts on every comment. Each one with no request still costs a runner for a few seconds.
+- Do not make this a required check. It has no pull request trigger, and a commit the agent pushes
+  with `GITHUB_TOKEN` starts no workflow, so new heads would never get a run.
+- Commits the agent pushes start no CI either, for the same reason. Push an empty commit or re-run CI
+  by hand after the agent has worked on a pull request.
+- There is no concurrency group: two requests on one issue run two agents at once. A group would
+  cancel a queued request without telling the person who made it.
 
 **Security model.** The agent job holds contents, issues and pull-requests write, and the API key. It
-runs on `pull_request`, never `pull_request_target`, so a fork's pull request gets no secret. The action
-is pinned by commit SHA and checks that whoever triggered it has write access to the repository. No
-secret or event text is written into a shell script.
+never runs on `pull_request_target`, and a fork's review comment gets no secret, so the agent steps are
+skipped. No secret and no event text is written into a shell script; the deciding step receives author
+associations and true/false answers only. Once summoned, the agent reads issue, pull request and
+comment text that anyone may have written, with write access and the key in hand. The action is pinned
+by commit SHA, but it installs the latest Letta Code CLI from npm at run time, so the pin does not fix
+everything that runs.
 
-**Validated vs unverified.** Structure-tested (`tests/test_letta_code_workflow.py`). The same steps have
-run in a private repository as a plain workflow, but **this reusable form has never run live**, and the
-action's own permission check is taken from its source, not tested here.
+**Validated vs unverified.** The deciding step is run for real in
+`tests/test_letta_code_workflow.py`, and the rest of the job's shape is pinned there. What the action
+does (its triggers, its write-access check, its treatment of bots) was read in its source at the pinned
+commit and never run here. **This workflow has never run live**: the check name, the behaviour of the
+`contains()` expressions on real events, and a maintainer summoning the agent on a fork's pull request
+are all unverified.
 
 ### Work status (`scripts/work_status.py`)
 

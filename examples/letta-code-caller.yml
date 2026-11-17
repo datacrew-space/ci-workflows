@@ -3,17 +3,15 @@ name: Letta Code
 # Copy to .github/workflows/letta-code.yml and pin the `uses:` ref to a commit SHA of
 # datacrew-space/ci-workflows. It stays off until the repository variable LETTA_CODE_ENABLED is `true`.
 #
-# The caller owns the triggers. Keep `synchronize` and `reopened` only if this check is required on your
-# default branch (see the header of the reusable workflow); otherwise drop them and save the runs.
-# Do not change `pull_request` to `pull_request_target`: the job has write access and a secret.
+# The caller owns the triggers. These four are every event that can summon the agent; see the header of
+# the reusable workflow for which ones do. Do not add `pull_request_target`: the job has write access
+# and a secret.
 
 on:
   issues:
     types: [opened, labeled]
   issue_comment:
     types: [created]
-  pull_request:
-    types: [opened, labeled, synchronize, reopened]
   pull_request_review_comment:
     types: [created]
 
