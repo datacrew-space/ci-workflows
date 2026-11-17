@@ -72,6 +72,7 @@ checked out from this repository at `tooling-ref`, never from the repository bei
 |---|---|
 | Issue dispatcher | Partly validated live; see below |
 | Ready when green | **Never run live**; unit-tested only |
+| Letta Code | Structure-tested only; the shared workflow has **never run live** |
 | Work status script | Unit-tested against canned `gh` output |
 | Claude Code hooks (examples) | Unit-tested; used in interactive sessions before being ported here |
 
@@ -176,6 +177,40 @@ never touched, and a missing or pending `ci-ok` is never read as green.
 
 **Validated vs unverified.** Unit-tested (`tests/test_ready_when_green.py`). **It has never run live**, so the trigger wiring, the token scopes and the flip itself are
 unverified.
+
+### Letta Code (`letta-code.yml`)
+
+**What it does.** Lets people summon a Letta agent on an issue or pull request. The agent acts when a
+comment or body contains the trigger phrase (default `@letta-code`) or the trigger label (default
+`letta-code`) is added; any other event ends in a few seconds without calling it.
+
+**Off by default.** The caller's job runs only when the repository variable `LETTA_CODE_ENABLED` is
+`true`. With it on but no `LETTA_API_KEY` secret or no `agent-id`, the job reports and skips the agent.
+
+**Setup.** Copy [`examples/letta-code-caller.yml`](examples/letta-code-caller.yml), pin the SHA, store
+the `LETTA_API_KEY` secret, set the `LETTA_AGENT_ID` variable, then set `LETTA_CODE_ENABLED=true`.
+
+**Inputs.** `runs-on`, `agent-id`, `trigger-phrase`, `label-trigger`.
+
+**Things to know.**
+
+- The job starts on every comment, and the action decides whether a trigger is present. Each comment
+  with no trigger still costs a runner for a few seconds.
+- The check is named `<caller job> / letta`. If you make it a required check, keep `synchronize` and
+  `reopened` in the caller's triggers so every new head gets a run; on those events the job reports
+  and skips the agent. A repository that already requires a check called `letta` must update its
+  required checks when it moves to this workflow.
+- While the variable is off the caller's job is skipped. GitHub counts a skipped job as passing a
+  required check.
+
+**Security model.** The agent job holds contents, issues and pull-requests write, and the API key. It
+runs on `pull_request`, never `pull_request_target`, so a fork's pull request gets no secret. The action
+is pinned by commit SHA and checks that whoever triggered it has write access to the repository. No
+secret or event text is written into a shell script.
+
+**Validated vs unverified.** Structure-tested (`tests/test_letta_code_workflow.py`). The same steps have
+run in a private repository as a plain workflow, but **this reusable form has never run live**, and the
+action's own permission check is taken from its source, not tested here.
 
 ### Work status (`scripts/work_status.py`)
 

@@ -1,0 +1,89 @@
+name: Letta Code (reusable)
+
+# A reusable workflow. It lets people summon a Letta agent on an issue or pull request: the agent acts
+# when a comment or body contains the trigger phrase (default `@letta-code`) or the trigger label
+# (default `letta-code`) is added, and does nothing otherwise. The action decides that, and it also
+# checks that the person who triggered it has write access to the repository.
+#
+# Off by default, twice over:
+#   - the caller's job runs only when the repository variable LETTA_CODE_ENABLED is `true`
+#     (examples/letta-code-caller.yml);
+#   - with no LETTA_API_KEY or no `agent-id`, the job reports and never calls the agent.
+#
+# The caller owns the triggers. A job that starts on every comment costs a runner for a few seconds
+# each time, even when no trigger phrase is present; that is the price of letting the action decide.
+#
+# If the check is REQUIRED on your default branch, keep `synchronize` and `reopened` in the caller's
+# trigger list. A required check is satisfied only by a run on the PR's current head, so a push with no
+# run blocks the PR for good. On those two events this job reports and skips the agent: a push carries
+# no new request from a person. The check is named `<caller job> / letta`.
+#
+# Security: the agent job holds contents, issues and pull-requests write on the caller's repository,
+# and the Letta API key. It runs on `pull_request`, never `pull_request_target`, so a fork PR gets no
+# secret and the job skips. No event text reaches a shell command.
+#
+# Secret: LETTA_API_KEY (a plain GitHub secret).
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        default: '"ubuntu-latest"'
+      agent-id:
+        description: Id of the Letta agent to run. Empty means the job reports and skips the agent.
+        type: string
+        default: ""
+      trigger-phrase:
+        type: string
+        default: "@letta-code"
+      label-trigger:
+        type: string
+        default: letta-code
+    secrets:
+      LETTA_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  letta:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Decide whether the agent may act
+        id: act
+        env:
+          LETTA_API_KEY: ${{ secrets.LETTA_API_KEY }}
+          AGENT_ID: ${{ inputs.agent-id }}
+          EVENT_ACTION: ${{ github.event.action }}
+        run: |
+          act=true
+          if [ -z "$LETTA_API_KEY" ] || [ -z "$AGENT_ID" ]; then
+            act=false
+            echo "Not calling the agent: LETTA_API_KEY or agent-id is missing."
+          fi
+          case "$EVENT_ACTION" in
+            synchronize|reopened)
+              act=false
+              echo "Not calling the agent: $EVENT_ACTION carries no new request. Reporting the check only."
+              ;;
+          esac
+          echo "act=$act" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: ${{ steps.act.outputs.act == 'true' }}
+
+      - uses: letta-ai/letta-code-action@b50e45b91c77d5a7b8a64f4088bedcd8c442bd13 # v0.0.6
+        if: ${{ steps.act.outputs.act == 'true' }}
+        with:
+          letta_api_key: ${{ secrets.LETTA_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          agent_id: ${{ inputs.agent-id }}
+          trigger_phrase: ${{ inputs.trigger-phrase }}
+          label_trigger: ${{ inputs.label-trigger }}
