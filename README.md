@@ -180,10 +180,10 @@ unverified.
 
 ### Letta Code (`letta-code.yml`)
 
-**What it does.** Lets a maintainer summon a Letta agent. Three things summon it:
+**What it does.** Lets someone with write access summon a Letta agent. Three things summon it:
 
-- the trigger phrase (default `@letta-code`) in an issue comment, a pull request comment or a pull
-  request review comment;
+- the trigger phrase (default `@letta-code`) in an issue comment, a pull request comment, a pull
+  request review comment or the summary of a pull request review;
 - a new issue whose title or body contains the phrase;
 - the trigger label (default `letta-code`) added to an **issue**.
 
@@ -195,21 +195,35 @@ commit has no trigger for them.
 
 **Setup.** Copy [`examples/letta-code-caller.yml`](examples/letta-code-caller.yml), pin the SHA, store
 the `LETTA_API_KEY` secret, set the `LETTA_AGENT_ID` variable, then set `LETTA_CODE_ENABLED=true`. The
-runner needs npm.
+runner needs bash, npm and the `gh` CLI.
 
 **Inputs.** `runs-on`, `agent-id`, `trigger-phrase`, `label-trigger`.
 
-**Who may summon it.** One step decides, before the action starts: the comment's or issue's author must
-be an owner, member or collaborator of the repository and the phrase must be present, or the label
-added must be the trigger label. Everything else ends in a few seconds with a green run and no agent.
-The gate is there because the action checks write access before it looks for a trigger and **fails**
-the job for anyone without it, so on a public repository every outside comment would otherwise be a
-red run. The action still has the last word: a collaborator with less than write access, or a
-triage-role user adding the label, passes the gate and fails in the action.
+**Who may summon it.** One step decides, before the action starts. It first checks that the event asks
+for the agent (the phrase or the trigger label is present). Only then does it ask GitHub for the
+actor's permission on the repository, which must be `write` or `admin`: the same question the action
+asks. It refuses:
+
+- anyone with less than write access, including the triage role (which can add labels);
+- bots;
+- any request on a pull request that comes from a fork. A comment there runs in the base repository
+  with the secret and the write token, and the action would fetch a branch of the fork's name from the
+  base repository: a red run when there is none, work on the wrong branch when there is.
+
+Every refusal ends in a few seconds with a green run and no agent. The gate is there because the action
+checks write access before it looks for a trigger and **fails** the job for anyone without it, so on a
+public repository every outside comment would otherwise be a red run. If the permission lookup itself
+fails, the step fails red, so a request is never dropped without a sign.
 
 **Things to know.**
 
 - The job starts on every comment. Each one with no request still costs a runner for a few seconds.
+- The gate's phrase test is looser than the action's. The gate accepts the phrase in any letter case
+  and anywhere in the text; the action wants the exact case, standing alone. `@Letta-Code`, or the
+  phrase inside backticks, passes the gate and the action then does nothing: a green run with no agent.
+- An issue opened with both the phrase and the trigger label sends two events, so two agents start.
+- An empty `trigger-phrase` switches the phrase triggers off (it would otherwise match every comment).
+- The action writes the agent's report to the job summary, which is public on a public repository.
 - Do not make this a required check. It has no pull request trigger, and a commit the agent pushes
   with `GITHUB_TOKEN` starts no workflow, so new heads would never get a run.
 - Commits the agent pushes start no CI either, for the same reason. Push an empty commit or re-run CI
@@ -217,20 +231,21 @@ triage-role user adding the label, passes the gate and fails in the action.
 - There is no concurrency group: two requests on one issue run two agents at once. A group would
   cancel a queued request without telling the person who made it.
 
-**Security model.** The agent job holds contents, issues and pull-requests write, and the API key. It
-never runs on `pull_request_target`, and a fork's review comment gets no secret, so the agent steps are
-skipped. No secret and no event text is written into a shell script; the deciding step receives author
-associations and true/false answers only. Once summoned, the agent reads issue, pull request and
-comment text that anyone may have written, with write access and the key in hand. The action is pinned
-by commit SHA, but it installs the latest Letta Code CLI from npm at run time, so the pin does not fix
-everything that runs.
+**Security model.** The agent job holds contents, issues and pull-requests write, and the API key. The
+caller must never use `pull_request_target`. A comment on a fork's pull request does run with the
+secret and the write token; the deciding step refuses it. No secret and no event text is written into a
+shell script or placed in its environment: the deciding step receives true/false answers, the actor's
+login and a pull request number, plus the job's own token for two read-only API calls. Once summoned,
+the agent reads issue, pull request and comment text that anyone may have written, with write access
+and the key in hand. The action is pinned by commit SHA, but it installs the latest Letta Code CLI from
+npm at run time, so the pin does not fix everything that runs.
 
 **Validated vs unverified.** The deciding step is run for real in
-`tests/test_letta_code_workflow.py`, and the rest of the job's shape is pinned there. What the action
-does (its triggers, its write-access check, its treatment of bots) was read in its source at the pinned
-commit and never run here. **This workflow has never run live**: the check name, the behaviour of the
-`contains()` expressions on real events, and a maintainer summoning the agent on a fork's pull request
-are all unverified.
+`tests/test_letta_code_workflow.py` against a stand-in for the `gh` CLI, and the rest of the job's
+shape is pinned there. What the action does (its triggers, its write-access check, its treatment of
+bots, its branch checkout) was read in its source at the pinned commit and never run here. **This
+workflow has never run live**: the check name, the behaviour of the expressions on real events, the
+two API calls with the job's token, and the fork refusal are all unverified.
 
 ### Work status (`scripts/work_status.py`)
 
