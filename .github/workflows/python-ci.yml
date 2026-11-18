@@ -11,8 +11,11 @@ name: Python CI (reusable)
 # cannot be arrays. Callers that cannot use GitHub-hosted runners (billing, policy) pass a repository
 # variable, e.g. `runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}`.
 #
+# A caller's workflow-level `env:` does not reach a called workflow, so environment comes in through
+# inputs: `env` for plain values, and the index inputs below for a token-gated package index.
+#
 # Lint always runs at the repository root, where `.pre-commit-config.yaml` lives. Test runs in
-# `working-directory`. Pin the caller's `uses:` ref and `config-ref` to the same commit SHA.
+# `working-directory`. Pin the caller's `uses:` ref and `tooling-ref` to the same commit SHA.
 
 on:
   workflow_call:
@@ -33,14 +36,20 @@ on:
         description: pre-commit version to run with uvx.
         type: string
         default: "4.7.0"
+      node-version:
+        description: Node.js version for hooks that need node or npx. Empty installs no node.
+        type: string
+        default: ""
       working-directory:
         description: Directory of the uv project (pyproject.toml and uv.lock) for the test job.
         type: string
         default: "."
       sync-args:
-        description: Arguments for `uv sync`. `--locked` fails when uv.lock is out of date.
+        description: >-
+          Arguments for `uv sync`. `--locked` fails when uv.lock is out of date. uv installs only the
+          `dev` group by default: name any other group, e.g. `--locked --group development`.
         type: string
-        default: "--locked --dev"
+        default: "--locked"
       pytest-args:
         description: Arguments for pytest.
         type: string
@@ -49,16 +58,55 @@ on:
         description: Comma-separated pre-commit hook ids to skip in CI (value of SKIP), e.g. hooks the test job already runs.
         type: string
         default: ""
-      config-ref:
+      env:
+        description: >-
+          Plain (non-secret) environment for both jobs, one NAME=value per line; blank lines and lines
+          starting with # are ignored. Use it for dummy settings a test collection needs.
+        type: string
+        default: ""
+      index-names:
+        description: >-
+          Comma-separated names of token-gated `[[tool.uv.index]]` entries. Each gets
+          UV_INDEX_<NAME>_USERNAME=__token__ and _PASSWORD=<token>. Empty fetches no token.
+        type: string
+        default: ""
+      infisical-domain:
+        description: Infisical URL the index token is fetched from (needed when index-names is set).
+        type: string
+        default: ""
+      infisical-project-slug:
+        description: Infisical project slug that holds the index token.
+        type: string
+        default: ""
+      infisical-env-slug:
+        description: Infisical environment slug that holds the index token.
+        type: string
+        default: "prod"
+      index-token-path:
+        description: Infisical folder that holds the index token.
+        type: string
+        default: "/"
+      index-token-name:
+        description: Name of the index token secret in that folder.
+        type: string
+        default: "PACKAGES_INDEX_TOKEN"
+      tooling-ref:
         description: >-
           Commit of datacrew-space/ci-workflows whose configs/ruff-base.toml the lint job compares the
           repository's copy against. Empty skips the drift check.
         type: string
         default: ""
       ruff-base-path:
-        description: Path of the repository's copy of ruff-base.toml, checked when config-ref is set.
+        description: Path of the repository's copy of ruff-base.toml, checked when tooling-ref is set.
         type: string
         default: "ruff-base.toml"
+    secrets:
+      INFISICAL_CLIENT_ID:
+        description: Machine identity that reads the index token. Needed only when index-names is set.
+        required: false
+      INFISICAL_CLIENT_SECRET:
+        description: Secret of that machine identity.
+        required: false
 
 permissions:
   contents: read
@@ -85,45 +133,111 @@ jobs:
       # runs first, so a drifted copy is reported even when a hook fails. It fails when the copy
       # differs from the pinned upstream version, so it cannot drift unnoticed.
       - name: Check ruff-base.toml against the pinned upstream copy
-        if: inputs.config-ref != ''
+        if: inputs.tooling-ref != ''
         env:
-          CONFIG_REF: ${{ inputs.config-ref }}
+          TOOLING_REF: ${{ inputs.tooling-ref }}
           RUFF_BASE_PATH: ${{ inputs.ruff-base-path }}
         run: |
           set -eu
-          case "$CONFIG_REF" in
+          case "$TOOLING_REF" in
             *[!0-9a-f]*|"") bad=1 ;;
-            *) if [ "${#CONFIG_REF}" -eq 40 ]; then bad=0; else bad=1; fi ;;
+            *) if [ "${#TOOLING_REF}" -eq 40 ]; then bad=0; else bad=1; fi ;;
           esac
           if [ "$bad" -ne 0 ]; then
-            echo "::error::config-ref must be a full 40-character commit SHA." >&2
+            echo "::error::tooling-ref must be a full 40-character commit SHA." >&2
             exit 1
           fi
           git init -q "$RUNNER_TEMP/ci-config"
-          git -C "$RUNNER_TEMP/ci-config" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$CONFIG_REF"
+          git -C "$RUNNER_TEMP/ci-config" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
           git -C "$RUNNER_TEMP/ci-config" checkout -q FETCH_HEAD
           if ! diff -u "$RUNNER_TEMP/ci-config/configs/ruff-base.toml" "$RUFF_BASE_PATH"; then
-            echo "::error::${RUFF_BASE_PATH} differs from configs/ruff-base.toml at the pinned config-ref. Copy the pinned file over it and put repository rules in ruff.toml." >&2
+            echo "::error::${RUFF_BASE_PATH} differs from configs/ruff-base.toml at the pinned tooling-ref. Copy the pinned file over it and put repository rules in ruff.toml." >&2
             exit 1
           fi
 
-      # Keep scratch files off /tmp, which is small or shared on some self-hosted runners.
-      - name: Use the runner temp directory for scratch files
+      # Scratch files go to RUNNER_TEMP, not /tmp, which is small or shared on some self-hosted runners.
+      # Then the caller's `env` input, checked line by line so it cannot set runner-control variables.
+      - name: Set the job environment
+        env:
+          JOB_ENV: ${{ inputs.env }}
         run: |
           echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in ''|'#'*) continue ;; esac
+            name="${line%%=*}"
+            if [[ "$line" != *=* || ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+              echo "::error::env input: a line is not NAME=value" >&2
+              exit 1
+            fi
+            case "$name" in
+              GITHUB_*|RUNNER_*|ACTIONS_*|PATH|BASH_ENV|ENV|LD_PRELOAD|LD_LIBRARY_PATH|NODE_OPTIONS|PYTHONPATH|UV_INDEX_*)
+                echo "::error::env input may not set ${name}" >&2
+                exit 1 ;;
+            esac
+            printf '%s\n' "$line" >> "$GITHUB_ENV"
+          done <<<"$JOB_ENV"
+
+      - name: Fetch the package index token
+        if: inputs.index-names != ''
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: "universal"
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          domain: ${{ inputs.infisical-domain }}
+          project-slug: ${{ inputs.infisical-project-slug }}
+          env-slug: ${{ inputs.infisical-env-slug }}
+          secret-path: ${{ inputs.index-token-path }}
+          secret-name: ${{ inputs.index-token-name }}
+
+      - name: Give uv the package index credentials
+        if: inputs.index-names != ''
+        env:
+          INDEX_NAMES: ${{ inputs.index-names }}
+          TOKEN_NAME: ${{ inputs.index-token-name }}
+        run: |
+          if [[ ! "$TOKEN_NAME" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "::error::index-token-name must be a plain variable name" >&2
+            exit 1
+          fi
+          token="${!TOKEN_NAME:-}"
+          if [ -z "$token" ]; then
+            echo "::error::the index token ${TOKEN_NAME} was not fetched" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          IFS=', ' read -ra names <<<"$INDEX_NAMES"
+          for name in "${names[@]}"; do
+            [ -n "$name" ] || continue
+            # uv's rule for the variable name: upper case, every non-alphanumeric character becomes _.
+            var=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')
+            {
+              echo "UV_INDEX_${var}_USERNAME=__token__"
+              echo "UV_INDEX_${var}_PASSWORD=${token}"
+            } >> "$GITHUB_ENV"
+          done
 
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
         with:
           version: ${{ inputs.uv-version }}
           python-version: ${{ inputs.python-version }}
+          # A venv of the pinned Python on PATH, so `language: system` hooks that run `python` get it
+          # rather than the runner's distro Python, or nothing.
+          activate-environment: true
           # A self-hosted runner keeps its own cache; the hosted cache would only add upload time.
           enable-cache: ${{ runner.environment == 'github-hosted' }}
 
-      # Hosted runners start empty, so the cache pays off there. A self-hosted runner keeps
-      # ~/.cache/pre-commit between runs and would only add upload time.
+      - name: Install Node.js
+        if: inputs.node-version != ''
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: ${{ inputs.node-version }}
+
+      # Ephemeral runners, hosted or self-hosted, start without hook environments, so cache them on
+      # every runner kind.
       - name: Cache pre-commit hook environments
-        if: runner.environment == 'github-hosted'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: ~/.cache/pre-commit
@@ -160,9 +274,66 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Use the runner temp directory for scratch files
+      - name: Set the job environment
+        env:
+          JOB_ENV: ${{ inputs.env }}
         run: |
           echo "TMPDIR=$RUNNER_TEMP" >> "$GITHUB_ENV"
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            case "$line" in ''|'#'*) continue ;; esac
+            name="${line%%=*}"
+            if [[ "$line" != *=* || ! "$name" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+              echo "::error::env input: a line is not NAME=value" >&2
+              exit 1
+            fi
+            case "$name" in
+              GITHUB_*|RUNNER_*|ACTIONS_*|PATH|BASH_ENV|ENV|LD_PRELOAD|LD_LIBRARY_PATH|NODE_OPTIONS|PYTHONPATH|UV_INDEX_*)
+                echo "::error::env input may not set ${name}" >&2
+                exit 1 ;;
+            esac
+            printf '%s\n' "$line" >> "$GITHUB_ENV"
+          done <<<"$JOB_ENV"
+
+      - name: Fetch the package index token
+        if: inputs.index-names != ''
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: "universal"
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          domain: ${{ inputs.infisical-domain }}
+          project-slug: ${{ inputs.infisical-project-slug }}
+          env-slug: ${{ inputs.infisical-env-slug }}
+          secret-path: ${{ inputs.index-token-path }}
+          secret-name: ${{ inputs.index-token-name }}
+
+      - name: Give uv the package index credentials
+        if: inputs.index-names != ''
+        env:
+          INDEX_NAMES: ${{ inputs.index-names }}
+          TOKEN_NAME: ${{ inputs.index-token-name }}
+        run: |
+          if [[ ! "$TOKEN_NAME" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+            echo "::error::index-token-name must be a plain variable name" >&2
+            exit 1
+          fi
+          token="${!TOKEN_NAME:-}"
+          if [ -z "$token" ]; then
+            echo "::error::the index token ${TOKEN_NAME} was not fetched" >&2
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          IFS=', ' read -ra names <<<"$INDEX_NAMES"
+          for name in "${names[@]}"; do
+            [ -n "$name" ] || continue
+            # uv's rule for the variable name: upper case, every non-alphanumeric character becomes _.
+            var=$(printf '%s' "$name" | tr '[:lower:]' '[:upper:]' | tr -c 'A-Z0-9' '_')
+            {
+              echo "UV_INDEX_${var}_USERNAME=__token__"
+              echo "UV_INDEX_${var}_PASSWORD=${token}"
+            } >> "$GITHUB_ENV"
+          done
 
       - name: Install uv
         uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3

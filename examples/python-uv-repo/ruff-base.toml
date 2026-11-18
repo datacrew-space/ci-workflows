@@ -1,7 +1,7 @@
 # Shared ruff base for Python repositories. Canonical copy: configs/ruff-base.toml in
 # datacrew-space/ci-workflows. Ruff cannot extend a URL, so each repository keeps a byte-identical
 # copy as `ruff-base.toml` and the lint job of python-ci.yml checks it against a pinned commit
-# (input `config-ref`). Do not edit the copy. Repository rules go in the repository's `ruff.toml`:
+# (input `tooling-ref`). Do not edit the copy. Repository rules go in the repository's `ruff.toml`:
 #
 #     extend = "ruff-base.toml"
 #     [lint]

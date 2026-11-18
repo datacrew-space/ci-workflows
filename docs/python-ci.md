@@ -16,7 +16,7 @@ the lint and test foundation under them.
 1. Copy the four files of [`examples/python-uv-repo/`](../examples/python-uv-repo) into your repository
    (the README there lists where each goes).
 2. Pick one reviewed commit SHA of this repository. Replace **both** `<commit-sha>` placeholders in
-   `ci.yml`: the `uses:` ref and `config-ref`.
+   `ci.yml`: the `uses:` ref and `tooling-ref`.
 3. Create the pre-commit secret baseline once: `uvx detect-secrets scan > .secrets.baseline`.
 4. Run `uvx pre-commit run --all-files` and fix or grandfather what the new rules report (see
    [Ruff](#ruff)), then commit.
@@ -33,16 +33,38 @@ Two jobs. `lint` runs `pre-commit run --all-files` at the repository root. `test
 | `python-version` | `3.13` | Python for uv |
 | `uv-version`, `pre-commit-version` | pinned | Tool versions, pinned so runs are reproducible |
 | `working-directory` | `.` | Directory with `pyproject.toml` and `uv.lock`, for `test` |
-| `sync-args` | `--locked --dev` | Arguments for `uv sync`. `--locked` fails on a stale `uv.lock` |
+| `sync-args` | `--locked` | Arguments for `uv sync`. `--locked` fails on a stale `uv.lock`. uv installs only the `dev` group by default, so name any other group: `--locked --group development` |
 | `pytest-args` | `-q --tb=short` | Arguments for pytest (shell-style quoting works) |
 | `skip-hooks` | empty | Hook ids to skip in CI (`SKIP`), for hooks the `test` job already runs |
-| `config-ref` | empty | Commit whose `configs/ruff-base.toml` the lint job compares your copy to. Empty skips the check |
+| `node-version` | empty | Installs Node.js in `lint` for hooks that run `node` or `npx` |
+| `env` | empty | Plain environment for both jobs, one `NAME=value` per line (see below) |
+| `index-names` | empty | Token-gated uv indexes to authenticate (see below) |
+| `infisical-domain`, `infisical-project-slug`, `infisical-env-slug`, `index-token-path`, `index-token-name` | `prod`, `/`, `PACKAGES_INDEX_TOKEN` for the last three | Where the index token lives |
+| `tooling-ref` | empty | Commit whose `configs/ruff-base.toml` the lint job compares your copy to. Empty skips the check |
 | `ruff-base-path` | `ruff-base.toml` | Where your copy lives |
+
+Optional secrets: `INFISICAL_CLIENT_ID`, `INFISICAL_CLIENT_SECRET`, needed only with `index-names`.
 
 Built in, each because a repository once needed it: read-only token, `persist-credentials: false`,
 a timeout on every job, scratch files in `RUNNER_TEMP`, uv HTTP retries, a pre-commit environment
 cache with retried `install-hooks` (the hook run itself is never retried), and the uv cache only on
-GitHub-hosted runners.
+GitHub-hosted runners. The pre-commit cache is used on every runner kind, because ephemeral
+self-hosted runners start without hook environments too. `lint` activates a venv of
+`python-version`, so `language: system` hooks that run `python` get that Python.
+
+### Environment: `env` and private indexes
+
+A caller's workflow-level `env:` does not reach a called workflow. Pass plain values (for example
+dummy settings a test collection validates) in `env`, one `NAME=value` per line. Lines that would set
+runner-control variables (`GITHUB_*`, `RUNNER_*`, `PATH`, `BASH_ENV`, `UV_INDEX_*` and similar) fail the
+job. Never put a secret in `env`.
+
+For packages from a token-gated `[[tool.uv.index]]`, list the index names in `index-names`
+(comma-separated, as written in `pyproject.toml`) and pass the Infisical machine identity as secrets.
+Both jobs fetch `index-token-name` from `index-token-path` and set `UV_INDEX_<NAME>_USERNAME=__token__`
+and `UV_INDEX_<NAME>_PASSWORD`, with the name converted the way uv does (upper case, other characters
+to `_`). The token is masked, but the pull request's own hooks and tests run with it in the
+environment, so this belongs on private repositories only, like self-hosted runners.
 
 ### The `ci-ok` gate lives in the caller
 
@@ -63,7 +85,7 @@ request from a fork could run code on it. A job that died at setup did not pass.
 
 ## Pin to a commit SHA
 
-Pin the `uses:` ref and `config-ref` to the same full commit SHA, never `@main`: the workflow runs in
+Pin the `uses:` ref and `tooling-ref` to the same full commit SHA, never `@main`: the workflow runs in
 your repository with your token. Updating is one reviewed change per repository, a new SHA in both
 places. While this repository's own pull request is open, a consumer may pin the pull request's head
 commit; bump it to the merged commit afterwards.
@@ -71,7 +93,9 @@ commit; bump it to the merged commit afterwards.
 ## Pre-commit
 
 pre-commit cannot include another file, so `configs/python-pre-commit.yaml` is a scaffold you copy and
-own. Hook versions are pinned. The slots you edit are marked with comments.
+own. Hook versions are pinned. The slots you edit are marked with comments. Hook `rev`s are release
+tags, which an upstream can move, while actions in the workflow are pinned to commit SHAs; pin a
+hook to a SHA if your repository needs that guarantee.
 
 ### The vendor exclude slot
 
@@ -88,7 +112,7 @@ how pre-commit passes files, even when the file is excluded.
 ### Secrets
 
 `detect-secrets` scans every file, **including workflow files**, because a hardcoded credential in a
-workflow is a common mistake. Only lines that pin a commit SHA (`uses:` or `config-ref:`) are skipped,
+workflow is a common mistake. Only lines that pin a commit SHA (`uses:` or `tooling-ref:`) are skipped,
 since the entropy plugins flag SHAs. Use `${{ secrets.NAME }}` instead of a literal value.
 
 ## Ruff
@@ -103,10 +127,11 @@ URL, so each repository keeps a byte-identical copy as `ruff-base.toml`, and its
   may only shrink. Never use a repository-wide `ignore` for a base rule.
 - When the new rules report their first large number, the checker is what is under test: cluster the
   findings, then baseline. Do not silence the rule.
-- Pass `config-ref` and the lint job fails when your copy differs from the pinned upstream file.
+- Pass `tooling-ref` and the lint job fails when your copy differs from the pinned upstream file.
 - **Logging:** `TID251` bans `logging`, `logging.handlers`, `logging.config`, `loguru` and `structlog`:
   every repository logs through the shared logging package. List legacy files in
-  `[lint.extend-per-file-ignores]` with `TID251`, and shrink the list.
+  `[lint.extend-per-file-ignores]` with `TID251`, and shrink the list. The shared logging package
+  itself wraps `logging`, so it lists its own source files there.
 - Keep the ruff version in your dev dependencies equal to the `ruff-pre-commit` `rev`.
 
 ## Changing the base

@@ -40,8 +40,34 @@ def test_inputs_and_defaults():
     assert ins["runs-on"]["default"] == '"ubuntu-latest"'
     assert ins["python-version"]["default"] == "3.13"
     assert ins["working-directory"]["default"] == "."
-    assert ins["config-ref"]["default"] == ""
+    assert ins["tooling-ref"]["default"] == ""
+    # `--dev` would add nothing (uv installs the `dev` group by default) and hides that a group with
+    # another name is skipped; callers name their group.
+    assert ins["sync-args"]["default"] == "--locked"
+    assert ins["node-version"]["default"] == ""
+    assert ins["env"]["default"] == ""
+    assert ins["index-names"]["default"] == ""
     assert all(i["type"] == "string" for i in ins.values())
+
+
+def test_infisical_secrets_are_optional():
+    # A repository without a private index passes no secrets at all.
+    secrets = CALL["secrets"]
+    assert sorted(secrets) == ["INFISICAL_CLIENT_ID", "INFISICAL_CLIENT_SECRET"]
+    assert all(s["required"] is False for s in secrets.values())
+
+
+def test_index_steps_run_only_when_index_names_are_given():
+    for job in ("lint", "test"):
+        steps = {s.get("name"): s for s in PYCI["jobs"][job]["steps"]}
+        assert steps["Fetch the package index token"]["if"] == "inputs.index-names != ''"
+        assert steps["Give uv the package index credentials"]["if"] == "inputs.index-names != ''"
+
+
+def test_lint_puts_the_pinned_python_on_path_and_node_only_when_asked():
+    steps = {s.get("name"): s for s in PYCI["jobs"]["lint"]["steps"]}
+    assert steps["Install uv"]["with"]["activate-environment"] is True
+    assert steps["Install Node.js"]["if"] == "inputs.node-version != ''"
 
 
 def test_has_lint_and_test_but_no_gate_job():
@@ -89,7 +115,7 @@ def test_inputs_never_reach_the_shell_through_expression_interpolation():
 
 def test_drift_check_is_off_unless_a_config_ref_is_given():
     (drift,) = [s for _, s in all_steps(PYCI) if str(s.get("name", "")).startswith("Check ruff-base")]
-    assert drift["if"] == "inputs.config-ref != ''"
+    assert drift["if"] == "inputs.tooling-ref != ''"
 
 
 # --- base configs -------------------------------------------------------------------------------
@@ -172,15 +198,16 @@ def test_detect_secrets_scans_workflow_files_and_skips_only_sha_pin_lines():
     assert not re.search(hook["exclude"], ".github/workflows/ci.yml")
     pattern = re.compile(hook["args"][hook["args"].index("--exclude-lines") + 1])
     assert pattern.search("    uses: actions/checkout@" + "a" * 40 + " # v7.0.1")
-    assert pattern.search("      config-ref: " + "b" * 40)
+    assert pattern.search("      tooling-ref: " + "b" * 40)
     assert not pattern.search("      token: ghp_" + "a" * 36)
     assert not pattern.search("        run: echo uses: " + "d" * 40)  # a secret smuggled onto a similar line
-    assert not pattern.search("      TOKEN: " + "e" * 40 + " # config-ref: x")
+    assert not pattern.search("      TOKEN: " + "e" * 40 + " # tooling-ref: x")
     assert not pattern.search("      API_KEY: " + "c" * 40)
 
 
 # --- behaviour of the inline scripts ------------------------------------------------------------
 
+import os  # noqa: E402
 import shutil  # noqa: E402
 import subprocess  # noqa: E402
 
@@ -248,9 +275,85 @@ def test_drift_check_runs_before_the_hooks_and_demands_a_full_sha():
     assert "40-character commit SHA" in script
 
 
-def test_pre_commit_cache_is_only_used_on_hosted_runners():
+def test_pre_commit_cache_is_used_on_every_runner_kind():
+    # Self-hosted runners can be ephemeral too and start without hook environments.
     (cache,) = [s for s in PYCI["jobs"]["lint"]["steps"] if s.get("name") == "Cache pre-commit hook environments"]
-    assert cache["if"] == "runner.environment == 'github-hosted'"
+    assert "if" not in cache
+
+
+def test_both_jobs_share_the_same_environment_scripts():
+    for name in ("Set the job environment", "Give uv the package index credentials"):
+        assert step_script(PYCI, "lint", name) == step_script(PYCI, "test", name)
+
+
+@needs_bash
+@pytest.mark.parametrize(
+    ("ref", "code"),
+    [("a" * 40, 0), ("a" * 39, 1), ("A" * 40, 1), ("main", 1), ("", 1), ("a" * 41, 1)],
+)
+def test_drift_check_accepts_only_a_full_lowercase_sha(ref, code):
+    script = step_script(PYCI, "lint", "Check ruff-base.toml against the pinned upstream copy")
+    head = script.split("git init")[0]  # the validation only; nothing is fetched
+    env = {**os.environ, "TOOLING_REF": ref, "RUFF_BASE_PATH": "ruff-base.toml"}
+    done = subprocess.run([BASH, "-c", head], env=env, capture_output=True, text=True)
+    assert done.returncode == code
+
+
+def run_step_with_github_env(tmp_path: Path, name: str, env: dict) -> tuple[subprocess.CompletedProcess, str]:
+    out = tmp_path / "github_env"
+    out.write_text("")
+    base = {k: v for k, v in os.environ.items() if k != "PACKAGES_INDEX_TOKEN"}
+    full = base | {"GITHUB_ENV": str(out), "RUNNER_TEMP": str(tmp_path)} | env
+    done = subprocess.run([BASH, "-c", step_script(PYCI, "test", name)], env=full, capture_output=True, text=True)
+    return done, out.read_text().replace(chr(13), "")
+
+
+@needs_bash
+def test_env_input_lines_reach_the_job_environment(tmp_path):
+    value = "# dummy settings\nMONGODB_URI=mongodb://localhost:27017/ci\n\nA_B=x=y\n"
+    done, written = run_step_with_github_env(tmp_path, "Set the job environment", {"JOB_ENV": value})
+    assert done.returncode == 0, done.stderr
+    lines = written.splitlines()
+    assert lines[0].startswith("TMPDIR=")
+    assert lines[1:] == ["MONGODB_URI=mongodb://localhost:27017/ci", "A_B=x=y"]
+
+
+@needs_bash
+@pytest.mark.parametrize(
+    "value",
+    ["no equals sign", "1BAD=x", "GITHUB_PATH=/evil", "PATH=/evil", "BASH_ENV=/evil", "UV_INDEX_X_PASSWORD=evil"],
+)
+def test_env_input_rejects_bad_or_runner_control_lines(tmp_path, value):
+    done, written = run_step_with_github_env(tmp_path, "Set the job environment", {"JOB_ENV": value})
+    assert done.returncode != 0
+    assert "evil" not in written
+
+
+@needs_bash
+def test_index_credentials_use_uvs_variable_names(tmp_path):
+    env = {"INDEX_NAMES": "datacrew-cl, datacrew.dc_auth", "TOKEN_NAME": "PACKAGES_INDEX_TOKEN"}
+    env["PACKAGES_INDEX_TOKEN"] = "tok123"
+    done, written = run_step_with_github_env(tmp_path, "Give uv the package index credentials", env)
+    assert done.returncode == 0, done.stderr
+    assert written.splitlines() == [
+        "UV_INDEX_DATACREW_CL_USERNAME=__token__",
+        "UV_INDEX_DATACREW_CL_PASSWORD=tok123",
+        "UV_INDEX_DATACREW_DC_AUTH_USERNAME=__token__",
+        "UV_INDEX_DATACREW_DC_AUTH_PASSWORD=tok123",
+    ]
+    # The only place the token is printed is the mask command itself.
+    assert done.stdout.replace("::add-mask::tok123", "").count("tok123") == 0
+
+
+@needs_bash
+@pytest.mark.parametrize(("token_name", "token"), [("PACKAGES_INDEX_TOKEN", None), ("BAD-NAME", "x")])
+def test_index_credentials_fail_without_a_fetched_token_or_with_a_bad_name(tmp_path, token_name, token):
+    env = {"INDEX_NAMES": "datacrew-cl", "TOKEN_NAME": token_name}
+    if token is not None:
+        env[token_name] = token
+    done, written = run_step_with_github_env(tmp_path, "Give uv the package index credentials", env)
+    assert done.returncode != 0
+    assert written == ""
 
 
 CALLER = load(SCAFFOLD / ".github" / "workflows" / "ci.yml")

@@ -1,5 +1,5 @@
 # Caller for the shared Python CI. Copy to .github/workflows/ci.yml.
-# Pin `uses:` and `config-ref` to the same reviewed commit SHA of datacrew-space/ci-workflows
+# Pin `uses:` and `tooling-ref` to the same reviewed commit SHA of datacrew-space/ci-workflows
 # (replace both <commit-sha> placeholders). A bump is then one reviewed change per repository.
 name: CI
 
@@ -26,7 +26,7 @@ jobs:
       # blocked), set the repository variable CI_RUNS_ON to a JSON label such as '["self-hosted","linux"]'.
       runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}
       # working-directory: path/to/uv-project   # when pyproject.toml is not at the repository root
-      config-ref: <commit-sha>
+      tooling-ref: <commit-sha>
 
   # Add repository-specific jobs here and list them in `needs` below.
 
