@@ -65,7 +65,13 @@ GH_STUB = """#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$2" in
   users/*)
-    if [ "${STUB_FAIL:-}" = "user" ]; then exit 1; fi
+    if [ "${STUB_FAIL:-}" = "user" ]; then echo "gh: Server Error (HTTP 502)" >&2; exit 1; fi
+    if [ "${STUB_FAIL:-}" = "user404" ]; then
+      # what the real gh prints: the body on stdout, then the status on stderr
+      printf '%s' '{"message":"Not Found","status":"404"}'
+      echo "gh: Not Found (HTTP 404)" >&2
+      exit 1
+    fi
     echo "$STUB_TYPE" ;;
   repos/*/collaborators/*/permission)
     if [ "${STUB_FAIL:-}" = "permission" ]; then exit 1; fi
@@ -177,6 +183,7 @@ DENY = {
     "a bot adds the trigger label": {**ISSUE_LABELED, "ACTOR": "some-app[bot]"},
     "an account that is not a user and has no [bot] suffix": {"STUB_TYPE": "Bot"},
     "an organization account": {"STUB_TYPE": "Organization"},
+    "a login the users endpoint cannot find": {"STUB_FAIL": "user404"},
     "someone with read access adds the trigger label": {**ISSUE_LABELED, "STUB_PERMISSION": "read"},
     "someone with read access opens an issue with the phrase": {**ISSUE_OPENED, "STUB_PERMISSION": "read"},
     # pull requests from forks. Only a comment gets the secret; GitHub withholds it from a review or
@@ -244,6 +251,7 @@ NO_LOOKUP = [
     "a pull request is opened",
     "a push",
     "a review of a pull request from a fork",
+    "a review comment on a pull request from a fork",
 ]
 
 
@@ -278,8 +286,9 @@ def test_a_pull_request_is_not_looked_up_for_someone_without_write_access(job, t
     assert calls == [USER_CALL, PERMISSION_CALL]
 
 
-def test_permission_is_not_looked_up_for_an_account_that_is_not_a_user(job, tmp_path):
-    _, _, calls = run_decision(job, tmp_path, STUB_TYPE="Bot")
+@pytest.mark.parametrize("account", [{"STUB_TYPE": "Bot"}, {"STUB_FAIL": "user404"}])
+def test_permission_is_not_looked_up_for_an_account_that_is_not_a_user(job, tmp_path, account):
+    _, _, calls = run_decision(job, tmp_path, **account)
     assert calls == [USER_CALL]
 
 

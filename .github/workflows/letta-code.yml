@@ -19,7 +19,8 @@ name: Letta Code (reusable)
 # trigger and FAILS the job for anyone without it, so letting it see every comment on a public
 # repository would paint a red run per outside comment. Here those runs end green. The step also
 # refuses:
-#   - any account that is not a user, such as a bot (the action refuses them too, by the same test);
+#   - any account that is not a user, such as a bot (the action refuses them too, by the same test),
+#     and any login the users endpoint cannot find;
 #   - a pull request that comes from a fork. A comment on one runs in this repository WITH the secret
 #     and the write token, and the action would fetch a branch of the fork's name from this repository:
 #     a red run when there is none, work on the wrong branch when there is. (A review or review
@@ -135,10 +136,24 @@ jobs:
             elif [[ "$ACTOR" == *"[bot]" ]]; then
               why="$ACTOR is a bot"
             else
-              # Each lookup is a plain assignment: under `bash -e` only that form fails the step when
-              # the call fails (a failure inside `[ ... ]` would be ignored).
-              account_type="$(gh api "users/$ACTOR" --jq .type)"
-              if [ "$account_type" != "User" ]; then
+              # A failed lookup must fail the step, so each one stands as a plain assignment or in an
+              # `if !`. Inside `[ ... ]`, `local`, `export` or `declare`, `bash -e` would ignore it.
+              # A login the users endpoint cannot find (some App logins without a `[bot]` suffix) is
+              # refused green: the action makes the same call and would fail on it.
+              if ! account_type="$(gh api "users/$ACTOR" --jq .type 2>&1)"; then
+                case "$account_type" in
+                  *"(HTTP 404)"*)
+                    account_type="not found"
+                    ;;
+                  *)
+                    echo "$account_type" >&2
+                    exit 1
+                    ;;
+                esac
+              fi
+              if [ "$account_type" = "not found" ]; then
+                why="GitHub has no user account named $ACTOR"
+              elif [ "$account_type" != "User" ]; then
                 why="$ACTOR is not a user account"
               else
                 # `.permission` is admin, write, read or none: the maintain role reads as write and

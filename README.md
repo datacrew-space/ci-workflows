@@ -206,7 +206,8 @@ asks. It refuses:
 
 - anyone with less than write access, including the triage role (which can add labels). The maintain
   role counts as write, so maintainers may summon it;
-- any account that is not a user, such as a bot (the action applies the same test);
+- any account that is not a user, such as a bot (the action applies the same test), and any login
+  GitHub's users endpoint cannot find (some App logins have no `[bot]` suffix);
 - any request on a pull request that comes from a fork. A comment there runs in the base repository
   with the secret and the write token, and the action would fetch a branch of the fork's name from the
   base repository: a red run when there is none, work on the wrong branch when there is. A review or
