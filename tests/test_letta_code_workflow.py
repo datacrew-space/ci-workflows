@@ -64,6 +64,9 @@ def job() -> dict:
 GH_STUB = """#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
 case "$2" in
+  users/*)
+    if [ "${STUB_FAIL:-}" = "user" ]; then exit 1; fi
+    echo "$STUB_TYPE" ;;
   repos/*/collaborators/*/permission)
     if [ "${STUB_FAIL:-}" = "permission" ]; then exit 1; fi
     echo "$STUB_PERMISSION" ;;
@@ -90,11 +93,13 @@ SUMMONED = {
     "REVIEW_HAS_PHRASE": "false",
     "ISSUE_HAS_PHRASE": "false",
     "LABEL_MATCHES": "false",
+    "STUB_TYPE": "User",
     "STUB_PERMISSION": "write",
     "STUB_HEAD_REPO": "o/r",
     "STUB_FAIL": "",
 }
 
+USER_CALL = "api users/alice --jq .type"
 PERMISSION_CALL = "api repos/o/r/collaborators/alice/permission --jq .permission"
 PULL_CALL = "api repos/o/r/pulls/7 --jq .head.repo.full_name"
 
@@ -118,7 +123,9 @@ def run_decision(job: dict, tmp_path: Path, **changes: str) -> tuple[int, list[s
         "GH_LOG": str(log),
         "GITHUB_OUTPUT": out.as_posix(),
     }
-    done = subprocess.run(["bash", "-e", script.as_posix()], capture_output=True, env=env, check=False)
+    # The flags GitHub's runner uses for `shell: bash`.
+    command = ["bash", "--noprofile", "--norc", "-eo", "pipefail", script.as_posix()]
+    done = subprocess.run(command, capture_output=True, env=env, check=False)
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return done.returncode, out.read_text(encoding="utf-8").split(), calls
 
@@ -163,15 +170,22 @@ DENY = {
     "read access only (the triage role reads as this too)": {"STUB_PERMISSION": "read"},
     "no access": {"STUB_PERMISSION": "none"},
     "an empty permission answer": {"STUB_PERMISSION": ""},
-    "a permission level this step does not know": {"STUB_PERMISSION": "maintain"},
+    # Not policy: the API never answers `maintain` (it reports the maintain role as `write`, so
+    # maintainers are allowed). This only checks that an unexpected answer is refused.
+    "an answer the API does not give": {"STUB_PERMISSION": "maintain"},
     "a bot comments with the phrase": {"ACTOR": "some-app[bot]"},
     "a bot adds the trigger label": {**ISSUE_LABELED, "ACTOR": "some-app[bot]"},
+    "an account that is not a user and has no [bot] suffix": {"STUB_TYPE": "Bot"},
+    "an organization account": {"STUB_TYPE": "Organization"},
     "someone with read access adds the trigger label": {**ISSUE_LABELED, "STUB_PERMISSION": "read"},
     "someone with read access opens an issue with the phrase": {**ISSUE_OPENED, "STUB_PERMISSION": "read"},
-    # pull requests from forks
+    # pull requests from forks. Only a comment gets the secret; GitHub withholds it from a review or
+    # review comment on a fork's pull request, so those stop at the missing key.
     "a comment on a pull request from a fork": {**ON_PULL_REQUEST, **FORK},
-    "a review comment on a pull request from a fork": {**REVIEW_COMMENT, **FORK},
-    "a review of a pull request from a fork": {**REVIEW, **FORK},
+    "a review comment on a pull request from a fork": {**REVIEW_COMMENT, **FORK, "HAS_KEY": "false"},
+    "a review of a pull request from a fork": {**REVIEW, **FORK, "HAS_KEY": "false"},
+    "a review comment from a fork, should the secret ever be given": {**REVIEW_COMMENT, **FORK},
+    "a review from a fork, should the secret ever be given": {**REVIEW, **FORK},
     "a pull request whose head repository is gone": {**ON_PULL_REQUEST, "STUB_HEAD_REPO": ""},
     # the event does not ask
     "a comment without the phrase": NO_COMMENT,
@@ -229,6 +243,7 @@ NO_LOOKUP = [
     "an empty trigger phrase, which every comment contains",
     "a pull request is opened",
     "a push",
+    "a review of a pull request from a fork",
 ]
 
 
@@ -250,20 +265,25 @@ def test_the_api_is_called_only_for_a_request_that_could_be_answered(job, tmp_pa
 
 def test_the_actor_is_looked_up_on_this_repository(job, tmp_path):
     _, _, calls = run_decision(job, tmp_path)
-    assert calls == [PERMISSION_CALL]
+    assert calls == [USER_CALL, PERMISSION_CALL]
 
 
 def test_a_request_on_a_pull_request_also_looks_up_where_its_branch_lives(job, tmp_path):
     _, _, calls = run_decision(job, tmp_path, **ON_PULL_REQUEST)
-    assert calls == [PERMISSION_CALL, PULL_CALL]
+    assert calls == [USER_CALL, PERMISSION_CALL, PULL_CALL]
 
 
 def test_a_pull_request_is_not_looked_up_for_someone_without_write_access(job, tmp_path):
     _, _, calls = run_decision(job, tmp_path, **ON_PULL_REQUEST, STUB_PERMISSION="read")
-    assert calls == [PERMISSION_CALL]
+    assert calls == [USER_CALL, PERMISSION_CALL]
 
 
-@pytest.mark.parametrize("failing", ["permission", "pull"])
+def test_permission_is_not_looked_up_for_an_account_that_is_not_a_user(job, tmp_path):
+    _, _, calls = run_decision(job, tmp_path, STUB_TYPE="Bot")
+    assert calls == [USER_CALL]
+
+
+@pytest.mark.parametrize("failing", ["user", "permission", "pull"])
 def test_a_failed_lookup_fails_the_step_instead_of_dropping_the_request(job, tmp_path, failing):
     code, lines, _ = run_decision(job, tmp_path, **ON_PULL_REQUEST, STUB_FAIL=failing)
     assert code != 0
@@ -291,7 +311,10 @@ def test_the_job_is_exactly_decide_checkout_agent(job):
     assert decide_step["id"] == "act"
     assert decide_step["shell"] == "bash"
     assert set(decide_step) == {"name", "id", "shell", "env", "run"}
-    assert checkout == {"uses": "actions/checkout@v4", "if": WAITS}, "no `ref`: never check out pull request code"
+    assert checkout == {"uses": "actions/checkout@v4", "if": WAITS}, (
+        "no `ref`: the event's default ref only. On a review event that is the pull request's merge ref,"
+        " and the fork refusal keeps that to this repository's own branches"
+    )
     assert agent == {
         "uses": ACTION,
         "if": WAITS,

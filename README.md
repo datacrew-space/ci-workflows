@@ -204,11 +204,14 @@ for the agent (the phrase or the trigger label is present). Only then does it as
 actor's permission on the repository, which must be `write` or `admin`: the same question the action
 asks. It refuses:
 
-- anyone with less than write access, including the triage role (which can add labels);
-- bots;
+- anyone with less than write access, including the triage role (which can add labels). The maintain
+  role counts as write, so maintainers may summon it;
+- any account that is not a user, such as a bot (the action applies the same test);
 - any request on a pull request that comes from a fork. A comment there runs in the base repository
   with the secret and the write token, and the action would fetch a branch of the fork's name from the
-  base repository: a red run when there is none, work on the wrong branch when there is.
+  base repository: a red run when there is none, work on the wrong branch when there is. A review or
+  review comment on a fork's pull request gets no secret from GitHub, so its log says the key is
+  missing rather than naming the fork.
 
 Every refusal ends in a few seconds with a green run and no agent. The gate is there because the action
 checks write access before it looks for a trigger and **fails** the job for anyone without it, so on a
@@ -224,10 +227,9 @@ fails, the step fails red, so a request is never dropped without a sign.
 - An issue opened with both the phrase and the trigger label sends two events, so two agents start.
 - An empty `trigger-phrase` switches the phrase triggers off (it would otherwise match every comment).
 - The action writes the agent's report to the job summary, which is public on a public repository.
-- Do not make this a required check. It has no pull request trigger, and a commit the agent pushes
-  with `GITHUB_TOKEN` starts no workflow, so new heads would never get a run.
-- Commits the agent pushes start no CI either, for the same reason. Push an empty commit or re-run CI
-  by hand after the agent has worked on a pull request.
+- A commit the agent pushes with `GITHUB_TOKEN` starts no workflow: neither this one nor your CI. So do
+  not make this a required check (new heads would never get a run), and push an empty commit or re-run
+  CI by hand after the agent has worked on a pull request.
 - There is no concurrency group: two requests on one issue run two agents at once. A group would
   cancel a queued request without telling the person who made it.
 
@@ -235,7 +237,7 @@ fails, the step fails red, so a request is never dropped without a sign.
 caller must never use `pull_request_target`. A comment on a fork's pull request does run with the
 secret and the write token; the deciding step refuses it. No secret and no event text is written into a
 shell script or placed in its environment: the deciding step receives true/false answers, the actor's
-login and a pull request number, plus the job's own token for two read-only API calls. Once summoned,
+login and a pull request number, plus the job's own token for read-only API calls. Once summoned,
 the agent reads issue, pull request and comment text that anyone may have written, with write access
 and the key in hand. The action is pinned by commit SHA, but it installs the latest Letta Code CLI from
 npm at run time, so the pin does not fix everything that runs.
@@ -245,7 +247,7 @@ npm at run time, so the pin does not fix everything that runs.
 shape is pinned there. What the action does (its triggers, its write-access check, its treatment of
 bots, its branch checkout) was read in its source at the pinned commit and never run here. **This
 workflow has never run live**: the check name, the behaviour of the expressions on real events, the
-two API calls with the job's token, and the fork refusal are all unverified.
+API calls with the job's token, and the fork refusal are all unverified.
 
 ### Work status (`scripts/work_status.py`)
 
