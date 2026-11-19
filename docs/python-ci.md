@@ -29,6 +29,7 @@ Two jobs. `lint` runs `pre-commit run --all-files` at the repository root. `test
 
 | Input | Default | Meaning |
 |---|---|---|
+| `run-test` | `true` | Run the `test` job. `false` skips it and leaves `lint` running (see [Keeping your own test job](#keeping-your-own-test-job)) |
 | `runs-on` | `"ubuntu-latest"` | **JSON** label or label array for both jobs |
 | `python-version` | `3.13` | Python for uv |
 | `uv-version`, `pre-commit-version` | pinned | Tool versions, pinned so runs are reproducible |
@@ -73,6 +74,15 @@ workflow would therefore rename the required status check in every repository. S
 `ci-ok`, `needs` the call and any repository-specific jobs, and branch protection requires only
 `ci-ok`. The scaffold's gate uses `if: always()` and fails when a needed job failed or was cancelled;
 a gate that is skipped counts as a pass.
+
+### Keeping your own test job
+
+A repository whose tests need setup the shared `test` job cannot do (a private wheel installed before
+`uv sync`, service containers) passes `run-test: false`, uses the shared `lint`, and keeps its own
+test job. Its `ci-ok` must `needs` both the called-workflow job and its local test job, so neither
+can be missing from the gate. With `run-test: false` the shared `python / test` reports as skipped;
+keep `ci-ok` failing only on `failure` or `cancelled` (as the scaffold's gate does), because a
+skipped job must not fail it. The shared workflow adds no pre-sync scripts or services.
 
 ### Runners and billing
 
