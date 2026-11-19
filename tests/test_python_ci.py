@@ -47,7 +47,15 @@ def test_inputs_and_defaults():
     assert ins["node-version"]["default"] == ""
     assert ins["env"]["default"] == ""
     assert ins["index-names"]["default"] == ""
-    assert all(i["type"] == "string" for i in ins.values())
+    assert ins["run-test"]["type"] == "boolean"
+    assert ins["run-test"]["default"] is True
+    assert all(i["type"] == "string" for n, i in ins.items() if n != "run-test")
+
+
+def test_only_the_test_job_is_skipped_by_run_test():
+    # Negative case: lint must keep running when run-test is false, so it carries no such guard.
+    assert PYCI["jobs"]["test"]["if"] == "inputs.run-test"
+    assert "if" not in PYCI["jobs"]["lint"]
 
 
 def test_infisical_secrets_are_optional():

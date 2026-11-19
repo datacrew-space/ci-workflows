@@ -20,6 +20,12 @@ name: Python CI (reusable)
 on:
   workflow_call:
     inputs:
+      run-test:
+        description: >-
+          Run the test job. Set false to use only the shared lint and keep a repository-local test job
+          (its ci-ok must then need both).
+        type: boolean
+        default: true
       runs-on:
         description: JSON runner label or label array for both jobs, e.g. '"ubuntu-latest"' or '["self-hosted","linux"]'.
         type: string
@@ -263,6 +269,7 @@ jobs:
 
   test:
     name: test
+    if: inputs.run-test
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 20
     defaults:
