@@ -63,9 +63,9 @@ def job() -> dict:
 # Stands in for `gh api <path> --jq <filter>`: logs the call, then answers from the environment.
 GH_STUB = """#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
-if [ -n "${STUB_WARN:-}" ]; then echo "warning: $STUB_WARN" >&2; fi
 case "$2" in
   users/*)
+    if [ -n "${STUB_WARN:-}" ]; then echo "warning: $STUB_WARN" >&2; fi
     if [ "${STUB_FAIL:-}" = "user" ]; then echo "gh: Server Error (HTTP 502)" >&2; exit 1; fi
     if [ "${STUB_FAIL:-}" = "user404" ]; then
       # what the real gh prints: the body on stdout, then the status on stderr
@@ -123,6 +123,7 @@ def run_step(job: dict, tmp_path: Path, **changes: str) -> tuple[subprocess.Comp
     out = tmp_path / "out.txt"
     out.write_text("", encoding="utf-8")
     log = tmp_path / "gh.log"
+    (tmp_path / "tmp").mkdir(exist_ok=True)
     env = {
         **os.environ,
         "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
@@ -130,6 +131,7 @@ def run_step(job: dict, tmp_path: Path, **changes: str) -> tuple[subprocess.Comp
         **changes,
         "GH_LOG": str(log),
         "GITHUB_OUTPUT": out.as_posix(),
+        "TMPDIR": (tmp_path / "tmp").as_posix(),
     }
     # The flags GitHub's runner uses for `shell: bash`.
     command = ["bash", "--noprofile", "--norc", "-eo", "pipefail", script.as_posix()]
@@ -291,6 +293,22 @@ def test_a_refused_request_says_why(job, tmp_path, case):
     assert lines == ["act=false"]
     expected = f"Not calling the agent: {REASONS[case]}. Reporting the check only."
     assert expected in done.stdout.decode("utf-8").splitlines()
+
+
+@pytest.mark.parametrize(
+    "changes",
+    [{}, {"STUB_WARN": "something changed"}, {"STUB_FAIL": "user404"}, {"STUB_FAIL": "user"}],
+    ids=["a user", "a warning", "a 404", "a failed lookup"],
+)
+def test_the_lookup_leaves_no_temp_file_behind(job, tmp_path, changes):
+    run_step(job, tmp_path, **changes)
+    assert list((tmp_path / "tmp").iterdir()) == []
+
+
+def test_a_warning_from_a_successful_lookup_reaches_the_log(job, tmp_path):
+    done, lines, _ = run_step(job, tmp_path, STUB_WARN="something changed")
+    assert lines == ["act=true"]
+    assert "warning: something changed" in done.stderr.decode("utf-8")
 
 
 @pytest.mark.parametrize("case", NO_LOOKUP)
