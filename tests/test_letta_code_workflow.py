@@ -63,6 +63,7 @@ def job() -> dict:
 # Stands in for `gh api <path> --jq <filter>`: logs the call, then answers from the environment.
 GH_STUB = """#!/usr/bin/env bash
 echo "$*" >> "$GH_LOG"
+if [ -n "${STUB_WARN:-}" ]; then echo "warning: $STUB_WARN" >&2; fi
 case "$2" in
   users/*)
     if [ "${STUB_FAIL:-}" = "user" ]; then echo "gh: Server Error (HTTP 502)" >&2; exit 1; fi
@@ -103,6 +104,7 @@ SUMMONED = {
     "STUB_PERMISSION": "write",
     "STUB_HEAD_REPO": "o/r",
     "STUB_FAIL": "",
+    "STUB_WARN": "",
 }
 
 USER_CALL = "api users/alice --jq .type"
@@ -110,8 +112,8 @@ PERMISSION_CALL = "api repos/o/r/collaborators/alice/permission --jq .permission
 PULL_CALL = "api repos/o/r/pulls/7 --jq .head.repo.full_name"
 
 
-def run_decision(job: dict, tmp_path: Path, **changes: str) -> tuple[int, list[str], list[str]]:
-    """Run the step. Returns its exit code, the lines it wrote to GITHUB_OUTPUT and the `gh` calls it made."""
+def run_step(job: dict, tmp_path: Path, **changes: str) -> tuple[subprocess.CompletedProcess, list[str], list[str]]:
+    """Run the step. Returns the finished process, the lines it wrote to GITHUB_OUTPUT and the `gh` calls it made."""
     step = job["steps"][0]
     assert set(step["env"]) == {k for k in SUMMONED if not k.startswith("STUB_")}, "set every variable the step reads"
     (tmp_path / "gh").write_text(GH_STUB, encoding="utf-8", newline="\n")
@@ -133,7 +135,13 @@ def run_decision(job: dict, tmp_path: Path, **changes: str) -> tuple[int, list[s
     command = ["bash", "--noprofile", "--norc", "-eo", "pipefail", script.as_posix()]
     done = subprocess.run(command, capture_output=True, env=env, check=False)
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
-    return done.returncode, out.read_text(encoding="utf-8").split(), calls
+    return done, out.read_text(encoding="utf-8").split(), calls
+
+
+def run_decision(job: dict, tmp_path: Path, **changes: str) -> tuple[int, list[str], list[str]]:
+    """Run the step. Returns its exit code, the lines it wrote to GITHUB_OUTPUT and the `gh` calls it made."""
+    done, lines, calls = run_step(job, tmp_path, **changes)
+    return done.returncode, lines, calls
 
 
 def decide(job: dict, tmp_path: Path, **changes: str) -> str:
@@ -166,6 +174,7 @@ ALLOW = {
     "an issue opened with the phrase": ISSUE_OPENED,
     "the trigger label is added to an issue": ISSUE_LABELED,
     "the trigger label still works when the phrase is switched off": {**ISSUE_LABELED, "HAS_PHRASE_INPUT": "false"},
+    "gh prints a warning on stderr while answering": {**ON_PULL_REQUEST, "STUB_WARN": "something changed"},
 }
 
 DENY = {
@@ -263,6 +272,25 @@ def test_a_request_from_someone_with_write_access_starts_the_agent(job, tmp_path
 @pytest.mark.parametrize("case", sorted(DENY))
 def test_anything_else_only_reports_the_check(job, tmp_path, case):
     assert decide(job, tmp_path, **DENY[case]) == "act=false"
+
+
+# Each refusal after a request names its own reason in the log.
+REASONS = {
+    "no API key": "LETTA_API_KEY or agent-id is missing",
+    "a bot comments with the phrase": "some-app[bot] is a bot",
+    "an account that is not a user and has no [bot] suffix": "alice is not a user account",
+    "a login the users endpoint cannot find": "GitHub has no user account named alice",
+    "read access only (the triage role reads as this too)": "alice does not have write access to o/r",
+    "a comment on a pull request from a fork": "pull request 7 comes from a fork",
+}
+
+
+@pytest.mark.parametrize("case", sorted(REASONS))
+def test_a_refused_request_says_why(job, tmp_path, case):
+    done, lines, _ = run_step(job, tmp_path, **DENY[case])
+    assert lines == ["act=false"]
+    expected = f"Not calling the agent: {REASONS[case]}. Reporting the check only."
+    assert expected in done.stdout.decode("utf-8").splitlines()
 
 
 @pytest.mark.parametrize("case", NO_LOOKUP)
