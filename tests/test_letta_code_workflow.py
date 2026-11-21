@@ -112,7 +112,9 @@ PERMISSION_CALL = "api repos/o/r/collaborators/alice/permission --jq .permission
 PULL_CALL = "api repos/o/r/pulls/7 --jq .head.repo.full_name"
 
 
-def run_step(job: dict, tmp_path: Path, **changes: str) -> tuple[subprocess.CompletedProcess, list[str], list[str]]:
+def run_step(
+    job: dict, tmp_path: Path, stderr_full: bool = False, **changes: str
+) -> tuple[subprocess.CompletedProcess, list[str], list[str]]:
     """Run the step. Returns the finished process, the lines it wrote to GITHUB_OUTPUT and the `gh` calls it made."""
     step = job["steps"][0]
     assert set(step["env"]) == {k for k in SUMMONED if not k.startswith("STUB_")}, "set every variable the step reads"
@@ -135,6 +137,9 @@ def run_step(job: dict, tmp_path: Path, **changes: str) -> tuple[subprocess.Comp
     }
     # The flags GitHub's runner uses for `shell: bash`.
     command = ["bash", "--noprofile", "--norc", "-eo", "pipefail", script.as_posix()]
+    if stderr_full:
+        # every write to the step's stderr fails
+        command = ["bash", "-c", 'exec 2>/dev/full; exec "$@"', "bash", *command]
     done = subprocess.run(command, capture_output=True, env=env, check=False)
     calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
     return done, out.read_text(encoding="utf-8").split(), calls
@@ -302,6 +307,14 @@ def test_a_refused_request_says_why(job, tmp_path, case):
 )
 def test_the_lookup_leaves_no_temp_file_behind(job, tmp_path, changes):
     run_step(job, tmp_path, **changes)
+    assert list((tmp_path / "tmp").iterdir()) == []
+
+
+@pytest.mark.parametrize("changes", [{"STUB_WARN": "something changed"}, {"STUB_FAIL": "user"}])
+def test_the_temp_file_is_removed_when_copying_it_to_the_log_fails(job, tmp_path, changes):
+    done, lines, _ = run_step(job, tmp_path, stderr_full=True, **changes)
+    assert done.returncode != 0
+    assert lines == [], "no decision is written, so the agent steps cannot run"
     assert list((tmp_path / "tmp").iterdir()) == []
 
 

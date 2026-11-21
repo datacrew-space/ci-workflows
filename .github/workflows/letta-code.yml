@@ -141,19 +141,18 @@ jobs:
               # A login the users endpoint cannot find (some App logins without a `[bot]` suffix) is
               # refused green: the action makes the same call and would fail on it. gh's stderr goes
               # to a file, so a warning on a successful call cannot change the answer; the file is
-              # copied to the log and removed either way.
+              # copied to the log, and the trap removes it however the step ends.
               lookup_err="$(mktemp)"
+              trap 'rm -f "$lookup_err"' EXIT
               if ! account_type="$(gh api "users/$ACTOR" --jq .type 2>"$lookup_err")"; then
                 if grep -qF "(HTTP 404)" "$lookup_err"; then
                   account_type="not found"
                 else
                   cat "$lookup_err" >&2
-                  rm -f "$lookup_err"
                   exit 1
                 fi
               fi
               cat "$lookup_err" >&2
-              rm -f "$lookup_err"
               if [ "$account_type" = "not found" ]; then
                 why="GitHub has no user account named $ACTOR"
               elif [ "$account_type" != "User" ]; then
