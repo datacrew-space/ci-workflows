@@ -1,0 +1,200 @@
+name: Letta Code (reusable)
+
+# A reusable workflow. It lets someone with write access summon a Letta agent:
+#   - by writing the trigger phrase (default `@letta-code`) in an issue comment, a pull request comment,
+#     a pull request review comment or the summary of a pull request review;
+#   - by opening an issue whose title or body contains the phrase;
+#   - by adding the trigger label (default `letta-code`) to an ISSUE.
+# Nothing else summons it. A pull request body, a label on a pull request and a push never do: the
+# action at the pinned commit has no trigger for them.
+#
+# Off by default, twice over:
+#   - the caller's job runs only when the repository variable LETTA_CODE_ENABLED is `true`
+#     (examples/letta-code-caller.yml);
+#   - with no LETTA_API_KEY or no `agent-id`, the job reports and never calls the agent.
+#
+# One step decides whether an event may summon the agent ("Decide whether the agent may act"), and the
+# action starts only when it says yes. The step asks the question the action itself asks: does the
+# actor have write or admin access to this repository? The action checks that BEFORE it looks for a
+# trigger and FAILS the job for anyone without it, so letting it see every comment on a public
+# repository would paint a red run per outside comment. Here those runs end green. The step also
+# refuses:
+#   - any account that is not a user, such as a bot (the action refuses them too, by the same test),
+#     and any login the users endpoint cannot find;
+#   - a pull request that comes from a fork. A comment on one runs in this repository WITH the secret
+#     and the write token, and the action would fetch a branch of the fork's name from this repository:
+#     a red run when there is none, work on the wrong branch when there is. (A review or review
+#     comment on a fork's pull request gets no secret from GitHub, so it stops earlier, at "LETTA_API_KEY
+#     or agent-id is missing".)
+# The decision is tested by running it (tests/test_letta_code_workflow.py).
+#
+# The phrase test here (`contains()`: any letter case, anywhere in the text) is looser than the
+# action's (exact case, standing alone). `@Letta-Code`, or the phrase inside backticks, passes this
+# step and the action then does nothing: a green run with no agent.
+#
+# An issue opened with both the phrase and the label sends two events, so two agents start.
+#
+# The caller owns the triggers. A job that starts on every comment costs a runner for a few seconds
+# each time, even when no phrase is present.
+#
+# Security: the agent job holds contents, issues and pull-requests write on the caller's repository,
+# and the Letta API key. The caller must never use `pull_request_target`. No secret and no event text
+# is written into a shell script or placed in its environment: the decision step gets true/false
+# answers, the actor's login and a pull request number, plus the job's own token for read-only API
+# calls. Once summoned, the agent reads issue, pull request and comment text that anyone may have
+# written, and the action writes its report to the job summary, which is public on a public
+# repository. The action is pinned by commit SHA, but it installs the latest Letta Code CLI from npm
+# at run time, so the pin does not fix everything that runs. The runner needs bash, npm and the `gh`
+# CLI.
+#
+# Secret: LETTA_API_KEY (a plain GitHub secret).
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        default: '"ubuntu-latest"'
+      agent-id:
+        description: Id of the Letta agent to run. Empty means the job reports and skips the agent.
+        type: string
+        default: ""
+      trigger-phrase:
+        description: Phrase that summons the agent. Empty switches the phrase triggers off.
+        type: string
+        default: "@letta-code"
+      label-trigger:
+        description: Label that summons the agent when added to an issue (not a pull request)
+        type: string
+        default: letta-code
+    secrets:
+      LETTA_API_KEY:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  letta:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      issues: write
+      pull-requests: write
+    steps:
+      - name: Decide whether the agent may act
+        id: act
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          HAS_KEY: ${{ secrets.LETTA_API_KEY != '' }}
+          HAS_AGENT_ID: ${{ inputs.agent-id != '' }}
+          HAS_PHRASE_INPUT: ${{ inputs.trigger-phrase != '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          PR_NUMBER: ${{ github.event.pull_request.number || (github.event.issue.pull_request && github.event.issue.number) || '' }}
+          COMMENT_HAS_PHRASE: ${{ contains(github.event.comment.body, inputs.trigger-phrase) }}
+          REVIEW_HAS_PHRASE: ${{ contains(github.event.review.body, inputs.trigger-phrase) }}
+          ISSUE_HAS_PHRASE: ${{ contains(github.event.issue.title, inputs.trigger-phrase) || contains(github.event.issue.body, inputs.trigger-phrase) }}
+          LABEL_MATCHES: ${{ github.event.label.name == inputs.label-trigger }}
+        run: |
+          # 1. Does this event ask for the agent at all?
+          asked=false
+          why="$EVENT_NAME/$EVENT_ACTION never summons the agent"
+          case "$EVENT_NAME/$EVENT_ACTION" in
+            issue_comment/created|pull_request_review_comment/created)
+              asked="$COMMENT_HAS_PHRASE"
+              why="the comment does not contain the trigger phrase"
+              ;;
+            pull_request_review/submitted)
+              asked="$REVIEW_HAS_PHRASE"
+              why="the review does not contain the trigger phrase"
+              ;;
+            issues/opened)
+              asked="$ISSUE_HAS_PHRASE"
+              why="the issue does not contain the trigger phrase"
+              ;;
+            issues/labeled)
+              asked="$LABEL_MATCHES"
+              why="the label added is not the trigger label"
+              ;;
+          esac
+          if [ "$asked" = "true" ] && [ "$EVENT_ACTION" != "labeled" ] && [ "$HAS_PHRASE_INPUT" != "true" ]; then
+            asked=false
+            why="the trigger phrase is empty, which would match every comment"
+          fi
+
+          # 2. May the request be answered? The API is called only for a real request, and a failed
+          #    call fails the step, so that a request is never dropped without a red run to show it.
+          act=false
+          if [ "$asked" = "true" ]; then
+            if [ "$HAS_KEY" != "true" ] || [ "$HAS_AGENT_ID" != "true" ]; then
+              why="LETTA_API_KEY or agent-id is missing"
+            elif [[ "$ACTOR" == *"[bot]" ]]; then
+              why="$ACTOR is a bot"
+            else
+              # A failed lookup must fail the step, so each one stands as a plain assignment or in an
+              # `if !`. Inside `[ ... ]`, `local`, `export` or `declare`, `bash -e` would ignore it.
+              # A login the users endpoint cannot find (some App logins without a `[bot]` suffix) is
+              # refused green: the action makes the same call and would fail on it. gh's stderr goes
+              # to a file, so a warning on a successful call cannot change the answer; the file is
+              # copied to the log, and the trap removes it however the step ends.
+              lookup_err="$(mktemp)"
+              trap 'rm -f "$lookup_err"' EXIT
+              if ! account_type="$(gh api "users/$ACTOR" --jq .type 2>"$lookup_err")"; then
+                if grep -qF "(HTTP 404)" "$lookup_err"; then
+                  account_type="not found"
+                else
+                  cat "$lookup_err" >&2
+                  exit 1
+                fi
+              fi
+              cat "$lookup_err" >&2
+              if [ "$account_type" = "not found" ]; then
+                why="GitHub has no user account named $ACTOR"
+              elif [ "$account_type" != "User" ]; then
+                why="$ACTOR is not a user account"
+              else
+                # `.permission` is admin, write, read or none: the maintain role reads as write and
+                # triage as read.
+                permission="$(gh api "repos/$REPO/collaborators/$ACTOR/permission" --jq .permission)"
+                case "$permission" in
+                  admin|write)
+                    act=true
+                    ;;
+                  *)
+                    why="$ACTOR does not have write access to $REPO"
+                    ;;
+                esac
+              fi
+              if [ "$act" = "true" ] && [ -n "$PR_NUMBER" ]; then
+                head_repo="$(gh api "repos/$REPO/pulls/$PR_NUMBER" --jq .head.repo.full_name)"
+                if [ "$head_repo" != "$REPO" ]; then
+                  act=false
+                  why="pull request $PR_NUMBER comes from a fork"
+                fi
+              fi
+            fi
+          fi
+
+          if [ "$act" = "true" ]; then
+            echo "Calling the agent."
+          else
+            echo "Not calling the agent: $why. Reporting the check only."
+          fi
+          echo "act=$act" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v4
+        if: ${{ steps.act.outputs.act == 'true' }}
+
+      - uses: letta-ai/letta-code-action@b50e45b91c77d5a7b8a64f4088bedcd8c442bd13 # v0.0.6
+        if: ${{ steps.act.outputs.act == 'true' }}
+        with:
+          letta_api_key: ${{ secrets.LETTA_API_KEY }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          agent_id: ${{ inputs.agent-id }}
+          trigger_phrase: ${{ inputs.trigger-phrase }}
+          label_trigger: ${{ inputs.label-trigger }}
