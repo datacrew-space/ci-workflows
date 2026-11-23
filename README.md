@@ -95,6 +95,8 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
    `publish` job reads them), plus `CLAUDE_CODE_OAUTH_TOKEN`.
 2. Copy [`examples/dispatch-caller.yml`](examples/dispatch-caller.yml) to
    `.github/workflows/dispatch-ready-issues.yml` and pin `uses:` and `tooling-ref` to one commit SHA.
+   Keep its `permissions:` block whole. If a run shows "startup failure" and no jobs, the caller
+   grants less than a called job asks for: compare the block with the example at your pinned SHA.
 3. Copy [`examples/ticket-implementer.md`](examples/ticket-implementer.md) to
    `.agents/agents/ticket-implementer.md` and edit it. The part marked "CI contract" is read by the workflow.
 4. Add the app's slug to `allowed-bots` in your review caller (see the lesson above).
