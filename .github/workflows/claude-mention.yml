@@ -23,6 +23,11 @@ name: Claude mention (reusable)
 # The phrase test (`contains()`: any letter case, anywhere in the text) is looser than the action's, so
 # a mention in some other letter case passes this step and the action then does nothing.
 #
+# No fork refusal here, unlike letta-code.yml. The action restores its own configuration from the
+# base branch, not from the pull request, `restrict_untrusted_prs` limits its tools for authors without
+# write access, and only the allowed associations can summon it. What is left is prompt injection from
+# the content of a fork's pull request. There is no input to allow fork pull requests.
+#
 # Security: the job holds the Claude Code OAuth token once Claude is summoned, and reads issue, pull
 # request and comment text that anyone may have written. No secret and no event text is written into a
 # shell script or placed in its environment: the decision step gets true/false answers, the author
@@ -167,6 +172,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
+          persist-credentials: false
 
       - name: Fetch the Claude Code OAuth token
         if: ${{ steps.act.outputs.act == 'true' }}

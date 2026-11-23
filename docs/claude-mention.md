@@ -13,11 +13,20 @@ ref to a commit SHA of this repository.
 - Optional: `infisical-env-slug` (default `prod`), `infisical-claude-path` (default `/claude`),
   `trigger-phrase`, `allowed-associations` and `runs-on`.
 
+## Requirements
+
+- The Claude GitHub App must be installed on the adopting repository.
+- No `github_token` is passed, so the action exchanges an OIDC token for an App token. That this works
+  under `workflow_call` is unverified until the live run.
+
 ## Who may summon Claude
 
 The author of the mention must be in `allowed-associations` (default `OWNER,MEMBER,COLLABORATOR`), and
 must not be a bot. A comment without the phrase, or a mention from anyone else, ends green with the
 reason in the log. The action then applies its own write-access check.
+
+As reported and unverified: organization members whose membership is private may show as
+`CONTRIBUTOR`, and so be refused by the default set.
 
 ## Differences between the copies it replaces
 
