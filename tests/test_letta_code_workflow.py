@@ -113,13 +113,16 @@ PULL_CALL = "api repos/o/r/pulls/7 --jq .head.repo.full_name"
 
 
 def run_step(
-    job: dict, tmp_path: Path, stderr_full: bool = False, **changes: str
+    job: dict, tmp_path: Path, stderr_full: bool = False, rm_fails: bool = False, **changes: str
 ) -> tuple[subprocess.CompletedProcess, list[str], list[str]]:
     """Run the step. Returns the finished process, the lines it wrote to GITHUB_OUTPUT and the `gh` calls it made."""
     step = job["steps"][0]
     assert set(step["env"]) == {k for k in SUMMONED if not k.startswith("STUB_")}, "set every variable the step reads"
     (tmp_path / "gh").write_text(GH_STUB, encoding="utf-8", newline="\n")
     (tmp_path / "gh").chmod(0o755)
+    if rm_fails:
+        (tmp_path / "rm").write_text("#!/usr/bin/env bash\nexit 1\n", encoding="utf-8", newline="\n")
+        (tmp_path / "rm").chmod(0o755)
     script = tmp_path / "decide.sh"
     script.write_text(step["run"], encoding="utf-8", newline="\n")
     out = tmp_path / "out.txt"
@@ -316,6 +319,13 @@ def test_the_temp_file_is_removed_when_copying_it_to_the_log_fails(job, tmp_path
     assert done.returncode != 0
     assert lines == [], "no decision is written, so the agent steps cannot run"
     assert list((tmp_path / "tmp").iterdir()) == []
+
+
+@pytest.mark.parametrize(("changes", "decision"), [({}, "act=true"), ({"STUB_TYPE": "Bot"}, "act=false")])
+def test_a_failed_removal_of_the_temp_file_does_not_change_the_result(job, tmp_path, changes, decision):
+    done, lines, _ = run_step(job, tmp_path, rm_fails=True, **changes)
+    assert done.returncode == 0
+    assert lines == [decision]
 
 
 def test_a_warning_from_a_successful_lookup_reaches_the_log(job, tmp_path):
