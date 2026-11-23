@@ -117,6 +117,17 @@ on:
           .claude/, agent prompts and skills, AGENTS.md, lint config). The agent prompt is added for you.
         type: string
         default: ""
+      uv-version:
+        description: >-
+          uv version to install before `setup-command`, e.g. the one your CI pins. Empty installs
+          nothing: set it when `setup-command` or the agent's tools call `uv` and the runner image
+          does not carry it.
+        type: string
+        default: ""
+      python-version:
+        description: Python version for uv to use (only read when `uv-version` is set). Empty leaves the choice to uv.
+        type: string
+        default: ""
       setup-command:
         description: Shell command run before the agent (install dependencies), e.g. `uv sync --frozen`
         type: string
@@ -361,6 +372,18 @@ jobs:
           case "$tools$args" in *$'\n'*) echo '::error::tool lists and mcp-config paths may not contain a newline'; exit 1;; esac
           echo "args=$args" >> "$GITHUB_OUTPUT"
           echo "tools=$tools" >> "$GITHUB_OUTPUT"
+
+      # uv is not on every runner image. It comes from the same pinned action the Python CI uses, so no
+      # caller has to download an installer inside `setup-command`. The action puts uv on PATH for the
+      # steps below, the agent's included.
+      - name: Install uv
+        if: ${{ inputs.uv-version != '' }}
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ inputs.python-version }}
+          # A self-hosted runner keeps its own cache; the hosted cache would only add upload time.
+          enable-cache: ${{ runner.environment == 'github-hosted' }}
 
       - name: Set up the project
         if: ${{ inputs.setup-command != '' }}

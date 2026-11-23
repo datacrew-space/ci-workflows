@@ -578,3 +578,37 @@ def test_the_issue_title_goes_through_the_sanitiser_before_it_becomes_the_pr_tit
     run = step(jobs["publish"], "push")["run"]
     assert "bash ci-tooling/scripts/sanitize-pr-text.sh)" in run
     assert 'title="Work on issue #${ISSUE}"' in run
+
+
+# --- The agent's job can install uv: a runner image need not carry it ---------------------------------
+
+
+def test_uv_is_installed_before_the_setup_command_and_only_when_asked(jobs, inputs):
+    """A `setup-command` of `uv sync --frozen` ended in `uv: command not found` on a runner without uv."""
+    assert inputs["uv-version"]["default"] == ""
+    assert inputs["python-version"]["default"] == ""
+    names = [s.get("name") for s in jobs["implement"]["steps"]]
+    assert names.index("Install uv") < names.index("Set up the project") < names.index("Run the implementer agent")
+    install = step_by_name(jobs["implement"], "Install uv")
+    assert install["if"] == "${{ inputs.uv-version != '' }}"
+    assert install["with"]["version"] == "${{ inputs.uv-version }}"
+    assert install["with"]["python-version"] == "${{ inputs.python-version }}"
+
+
+def test_uv_comes_from_the_same_pinned_action_as_the_python_ci(jobs):
+    install = step_by_name(jobs["implement"], "Install uv")
+    assert re.fullmatch(r"astral-sh/setup-uv@[0-9a-f]{40}", install["uses"])
+    ci_uses = {
+        s["uses"]
+        for job in load(WF / "python-ci.yml")["jobs"].values()
+        for s in job["steps"]
+        if str(s.get("uses", "")).startswith("astral-sh/setup-uv@")
+    }
+    assert ci_uses == {install["uses"]}
+
+
+def test_only_the_agent_job_installs_uv(jobs):
+    """The publish job holds the push token and must run nothing the caller chose."""
+    for name, job in jobs.items():
+        if name != "implement":
+            assert all("setup-uv" not in str(s.get("uses", "")) for s in job["steps"]), name

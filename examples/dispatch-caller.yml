@@ -51,6 +51,8 @@ jobs:
       # ready-for-review-label: ready-for-review
       # owner-handle: your-github-login            # mentioned when an issue needs a human; default: repo owner
       # dispatch-limit: 2
+      # uv-version: "0.13.7"                       # install uv first; a runner image may not carry it
+      # python-version: "3.13"
       # setup-command: uv sync --frozen            # install dependencies before the agent runs
       # extra-allowed-tools: "Bash(uv run pytest:*)"
       # extra-protected-paths: "scripts/deploy* Makefile"
