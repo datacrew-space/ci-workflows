@@ -268,7 +268,7 @@ jobs:
       # statuses, so a prompt-injected agent cannot forge the verdict.
       - name: Mint the ci-code-reviewer agent token
         id: agent-token
-        uses: actions/create-github-app-token@v2.1.4
+        uses: actions/create-github-app-token@v2.2.2
         with:
           app-id: ${{ env.CI_CODE_REVIEWER_APP_ID }}
           private-key: ${{ env.CI_CODE_REVIEWER_PRIVATE_KEY }}
@@ -434,7 +434,7 @@ jobs:
       - name: Mint the ci-code-reviewer writer token
         id: writer-token
         if: ${{ always() && steps.claude-review.outcome == 'success' }}
-        uses: actions/create-github-app-token@v2.1.4
+        uses: actions/create-github-app-token@v2.2.2
         with:
           app-id: ${{ env.CI_CODE_REVIEWER_APP_ID }}
           private-key: ${{ env.CI_CODE_REVIEWER_PRIVATE_KEY }}
@@ -531,7 +531,7 @@ jobs:
       # The agent's token: it can read, comment and file issues, but cannot push (contents: read).
       - name: Mint the ci-review-responder agent token
         id: agent-token
-        uses: actions/create-github-app-token@v2.1.4
+        uses: actions/create-github-app-token@v2.2.2
         with:
           app-id: ${{ env.CI_REVIEW_RESPONDER_APP_ID }}
           private-key: ${{ env.CI_REVIEW_RESPONDER_PRIVATE_KEY }}
@@ -814,7 +814,7 @@ jobs:
       - name: Mint the ci-review-responder push token
         id: push-token
         if: ${{ steps.verify.outputs.ready == 'true' }}
-        uses: actions/create-github-app-token@v2.1.4
+        uses: actions/create-github-app-token@v2.2.2
         with:
           app-id: ${{ env.CI_REVIEW_RESPONDER_APP_ID }}
           private-key: ${{ env.CI_REVIEW_RESPONDER_PRIVATE_KEY }}
@@ -904,7 +904,7 @@ jobs:
 
       - name: Mint the ci-review-orchestrator token (status, comment, label)
         id: orchestrator-token
-        uses: actions/create-github-app-token@v2.1.4
+        uses: actions/create-github-app-token@v2.2.2
         with:
           app-id: ${{ env.CI_REVIEW_ORCHESTRATOR_APP_ID }}
           private-key: ${{ env.CI_REVIEW_ORCHESTRATOR_PRIVATE_KEY }}

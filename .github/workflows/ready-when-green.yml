@@ -112,7 +112,7 @@ jobs:
 
       - name: Mint the token (mark ready, remove label)
         id: token
-        uses: actions/create-github-app-token@v2.1.4
+        uses: actions/create-github-app-token@v2.2.2
         with:
           app-id: ${{ secrets.READY_APP_ID || env.READY_APP_ID }}
           private-key: ${{ secrets.READY_APP_PRIVATE_KEY || env.READY_APP_PRIVATE_KEY }}

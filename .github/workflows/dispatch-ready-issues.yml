@@ -466,7 +466,7 @@ jobs:
       - name: Mint the implementer push token
         id: push-token
         if: ${{ steps.download.outcome == 'success' }}
-        uses: actions/create-github-app-token@v2.1.4
+        uses: actions/create-github-app-token@v2.2.2
         with:
           app-id: ${{ secrets.IMPLEMENTER_APP_ID || env.IMPLEMENTER_APP_ID }}
           private-key: ${{ secrets.IMPLEMENTER_APP_PRIVATE_KEY || env.IMPLEMENTER_APP_PRIVATE_KEY }}
