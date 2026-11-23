@@ -595,6 +595,12 @@ def test_uv_is_installed_before_the_setup_command_and_only_when_asked(jobs, inpu
     assert install["with"]["python-version"] == "${{ inputs.python-version }}"
 
 
+def test_the_agent_job_never_saves_a_uv_cache(jobs):
+    """The action saves its cache in a post step, after the agent ran code of its own in this job."""
+    install = step_by_name(jobs["implement"], "Install uv")
+    assert install["with"]["enable-cache"] is False
+
+
 def test_uv_comes_from_the_same_pinned_action_as_the_python_ci(jobs):
     install = step_by_name(jobs["implement"], "Install uv")
     assert re.fullmatch(r"astral-sh/setup-uv@[0-9a-f]{40}", install["uses"])

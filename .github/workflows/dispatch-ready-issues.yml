@@ -382,8 +382,10 @@ jobs:
         with:
           version: ${{ inputs.uv-version }}
           python-version: ${{ inputs.python-version }}
-          # A self-hosted runner keeps its own cache; the hosted cache would only add upload time.
-          enable-cache: ${{ runner.environment == 'github-hosted' }}
+          # Never cached, unlike the Python CI. The action's post step would save uv's cache after the
+          # agent ran, under a key later runs and the caller's own CI can restore, and the agent's test
+          # code can write to that cache. Nothing this job writes may outlive it.
+          enable-cache: false
 
       - name: Set up the project
         if: ${{ inputs.setup-command != '' }}
