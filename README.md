@@ -102,6 +102,7 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 
 **Inputs** (all optional). `runs-on` (JSON, default `"ubuntu-latest"`), `tooling-ref`, `agent-prompt`
 (default `.agents/agents/ticket-implementer.md`), `ready-label`, `claimed-label`, `needs-human-label`,
+`ready-for-review-label` (default `ready-for-review`: see below),
 `owner-handle` (empty = repository owner) and `mention-owner`, `draft` (default `true`: see below),
 `dispatch-limit` (default 2),
 `setup-command` (for example `uv sync --frozen`), `extra-allowed-tools`, `extra-protected-paths`,
@@ -112,8 +113,17 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 **Draft PRs.** The agent's PR opens as a **draft** by default (`draft: true`). In a repository whose
 automation merges any non-draft PR on green CI, "ready" can mean "merged", so an agent-written PR must
 not become ready without a recorded review. A draft is skipped by the review loop until it is marked ready;
-`ready-when-green` (below) is the documented path from draft to ready, once a human or an author adds its
-label. Set `draft: false` only if nothing in your repository merges on green CI alone.
+`ready-when-green` (below) is the documented path from draft to ready, once its label is on the PR.
+Set `draft: false` only if nothing in your repository merges on green CI alone.
+
+**The finished label.** The agent has finished before the PR is opened, so the dispatcher adds
+`ready-for-review-label` (default `ready-for-review`) to the draft itself. With `ready-when-green` enabled,
+the chain then needs nobody: PR opened, CI green, marked ready, review loop starts. Keep the name equal to
+`ready-when-green`'s `ready-label`. The label alone does nothing in a repository that does not run
+`ready-when-green`. Set `ready-for-review-label: ""` where automation merges any non-draft PR on green CI
+alone and `ready-when-green` is enabled: there a labelled draft would become ready, and so merge, before
+any review is recorded. No label is added when `draft` is `false`. If the label cannot be added, the PR
+stays open and the job fails with the PR number, so the miss is visible.
 
 **Concurrency.** Select-and-claim is serialised inside the workflow (one group per repository), so two
 overlapping runs cannot claim the same issue. The example caller's own `concurrency` block uses a different
@@ -161,7 +171,8 @@ resulting PR. The generalised inputs in this repository (defaults, `secret-sourc
 
 ### Ready when green (`ready-when-green.yml`)
 
-**What it does.** An author that has finished adds the `ready-for-review` label to its draft PR. Once
+**What it does.** An author that has finished adds the `ready-for-review` label to its draft PR (the
+issue dispatcher adds it to the PRs it opens; a person or an agent started by hand adds it themselves). Once
 the `ci-ok` check is green on its head, the PR is marked ready (which starts the review loop) and the
 label is removed. A stacked PR waits while the PR it is based on is still a draft. No label, no flip.
 

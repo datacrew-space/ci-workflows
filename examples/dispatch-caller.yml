@@ -45,6 +45,9 @@ jobs:
       # ready-label: ready-for-agent
       # claimed-label: agent-dispatched
       # needs-human-label: needs-human
+      # Added to the draft PR the dispatcher opens; ready-when-green marks a labelled draft ready once
+      # CI is green. Keep it equal to that workflow's `ready-label`. "" adds no label.
+      # ready-for-review-label: ready-for-review
       # owner-handle: your-github-login            # mentioned when an issue needs a human; default: repo owner
       # dispatch-limit: 2
       # setup-command: uv sync --frozen            # install dependencies before the agent runs

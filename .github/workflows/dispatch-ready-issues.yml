@@ -85,6 +85,13 @@ on:
         description: Label set when an issue ended without a PR; removing it retries the issue
         type: string
         default: needs-human
+      ready-for-review-label:
+        description: >-
+          Label the dispatcher adds to the draft PR it opens, to say the agent has finished. It must match
+          ready-when-green's `ready-label`, which marks a labelled draft ready once CI is green. Empty adds
+          no label; nothing is added when `draft` is false.
+        type: string
+        default: ready-for-review
       owner-handle:
         description: User or team (no @) to mention when an issue needs a human. Empty means the repository owner.
         type: string
@@ -227,10 +234,17 @@ jobs:
           REPO: ${{ github.repository }}
           NUMBERS: ${{ steps.select.outputs.numbers }}
           CLAIMED_LABEL: ${{ inputs.claimed-label }}
+          READY_FOR_REVIEW_LABEL: ${{ inputs.ready-for-review-label }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh label create "$CLAIMED_LABEL" --repo "$REPO" --color 5319E7 \
             --description "The dispatcher started an agent on this issue" > /dev/null 2>&1 || true
+          # The publish job adds this label to the PR it opens, with a token that has no issues: write,
+          # so the label is made here, where the default token may create one.
+          if [ -n "$READY_FOR_REVIEW_LABEL" ]; then
+            gh label create "$READY_FOR_REVIEW_LABEL" --repo "$REPO" --color 0E8A16 \
+              --description "The author has finished; mark this draft ready once CI is green" > /dev/null 2>&1 || true
+          fi
           claimed=()
           for n in $(echo "$NUMBERS" | tr -d '[] ' | tr ',' ' '); do
             if gh issue edit "$n" --repo "$REPO" --add-label "$CLAIMED_LABEL" > /dev/null; then
@@ -572,9 +586,44 @@ jobs:
           printf '\n\nCloses #%s\n\nOpened by the issue dispatcher ([run](%s)).\n' "$ISSUE" "$RUN_URL" >> "$body"
           draft_flag=()
           [ "$DRAFT" = "true" ] && draft_flag=(--draft)
-          GH_TOKEN="$PUSH_TOKEN" gh pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$branch" \
-            --title "$title" --body-file "$body" "${draft_flag[@]}"
-          echo "pushed $count commit(s) to $branch and opened a PR" >> "$GITHUB_STEP_SUMMARY"
+          # `gh pr create` prints the new PR's URL; the label step below reads the number from it.
+          # No pipe after it: without pipefail a pipe would hide a failed create. Only the last line is
+          # kept, so nothing gh prints can add a second `key=value` line to $GITHUB_OUTPUT.
+          pr_url=$(GH_TOKEN="$PUSH_TOKEN" gh pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$branch" \
+            --title "$title" --body-file "$body" "${draft_flag[@]}")
+          pr_url="${pr_url##*$'\n'}"
+          echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "pushed $count commit(s) to $branch and opened a PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+
+      # The agent has finished before this job opens the PR, so the dispatcher is the "author that has
+      # finished" and adds the label ready-when-green waits for. Without it the draft stays a draft for
+      # ever: the agent may not label and holds no token that could. The app token is used on purpose: a
+      # label set with GITHUB_TOKEN starts no workflow, so ready-when-green would not hear about it.
+      # A PR that is not a draft is ready already, and the label would only linger on it.
+      - name: Label the draft as finished
+        id: label
+        if: ${{ steps.push.outputs.pr-url != '' && inputs.draft && inputs.ready-for-review-label != '' }}
+        env:
+          GH_TOKEN: ${{ steps.push-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_URL: ${{ steps.push.outputs.pr-url }}
+          READY_FOR_REVIEW_LABEL: ${{ inputs.ready-for-review-label }}
+        run: |
+          # The PR is open whatever happens here, so a failure must be loud: a draft without the label
+          # is skipped by the review loop and nothing else will ever pick it up.
+          number="${PR_URL##*/}"
+          case "$number" in
+            '' | *[!0-9]*)
+              echo "::error::could not read a PR number from the URL the push step reported; add the ${READY_FOR_REVIEW_LABEL} label to the new PR by hand"
+              exit 1
+              ;;
+          esac
+          if ! gh api --method POST "repos/$REPO/issues/$number/labels" -f "labels[]=$READY_FOR_REVIEW_LABEL" > /dev/null; then
+            echo "::error::PR #$number is open but could not be labelled ${READY_FOR_REVIEW_LABEL}; add the label by hand"
+            echo "PR #$number is open but NOT labelled ${READY_FOR_REVIEW_LABEL}; add the label by hand" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "labelled #$number ${READY_FOR_REVIEW_LABEL}" >> "$GITHUB_STEP_SUMMARY"
 
   # Every dispatched issue ends with a PR or with a human. No agent runs here.
   report:
