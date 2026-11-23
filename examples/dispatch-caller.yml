@@ -37,6 +37,11 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
+      # The reusable `implement` job also reads CI state. Without these three GitHub refuses the run
+      # at startup, with no log, because a called job cannot hold a scope its caller did not grant.
+      checks: read
+      actions: read
+      statuses: read
     with:
       tooling-ref: <COMMIT_SHA>
       # Everything below is optional; the values shown are the defaults.
