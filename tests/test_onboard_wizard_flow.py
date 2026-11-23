@@ -314,13 +314,14 @@ def make_checkout(tmp_path: Path, name: str) -> Path:
     return d
 
 
-def run_batch(run: Run, args: list[str]) -> subprocess.CompletedProcess:
+def run_batch(run: Run, args: list[str], extra_env: dict[str, str] | None = None) -> subprocess.CompletedProcess:
     env = {k: v for k, v in os.environ.items() if k not in ("SHELLOPTS", "GH_REPO")}
     env.update(
         PATH=f"{run.dir.as_posix()}{os.pathsep}{env['PATH']}",
         STUB_DIR=run.dir.as_posix(),
         STUB_LOG=run.log.as_posix(),
     )
+    env.update(extra_env or {})
     return run_wizard(["bash", str(WIZARD), "--batch", *args], [], env)
 
 
@@ -444,3 +445,71 @@ def test_batch_with_no_checkouts_prints_usage(run, tmp_path):
     proc = run_batch(run, [str(batch_answers(tmp_path))])
     assert proc.returncode == 2
     assert "usage" in proc.stdout + proc.stderr
+
+
+def test_batch_does_not_take_a_missing_answer_from_the_environment(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    answers_file = tmp_path / "answers.env"
+    answers_file.write_text(
+        "INFISICAL_DOMAIN=https://secrets.example.invalid\nINFISICAL_PROJECT_SLUG=proj\n", encoding="utf-8"
+    )
+    proc = run_batch(run, [str(answers_file), str(a)], {"COMMIT_SHA": SHA})
+    assert proc.returncode == 1
+    assert "COMMIT_SHA" in proc.stdout + proc.stderr
+    assert written(a) == []
+
+
+def test_batch_ignores_a_stale_responder_id_in_the_environment(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    answers_file = batch_answers(tmp_path, RESPONDER_LOGIN="acme-responder")
+    proc = run_batch(run, [str(answers_file), str(a)], {"RESPONDER_ID": "999"})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    with_ = yaml.safe_load((a / ".github/workflows/claude-code-review.yml").read_text(encoding="utf-8"))["jobs"][
+        "review"
+    ]["with"]
+    assert with_["responder-bot-id"] == "4242"  # looked up, not the 999 in the environment
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("INFISICAL_DOMAIN", "x: y"),
+        ("INFISICAL_PROJECT_SLUG", "has space"),
+        ("INFISICAL_ENV_SLUG", "a b"),
+        ("INFISICAL_CLAUDE_PATH", "/a b"),
+        ("INFISICAL_GITHUB_PATH", "/a;b"),
+        ("RESPONDER_LOGIN", "bad login"),
+        ("RESPONDER_ID", "12ab"),
+        ("COMMIT_SHA", "A" * 40),
+    ],
+)
+def test_batch_rejects_each_invalid_answer_and_writes_nothing(run, tmp_path, key, value):
+    a = make_checkout(tmp_path, "one")
+    overrides = {key: value}
+    if key == "RESPONDER_ID":
+        overrides["RESPONDER_LOGIN"] = "acme-responder"
+    proc = run_batch(run, [str(batch_answers(tmp_path, **overrides)), str(a)])
+    assert proc.returncode != 0
+    assert written(a) == []
+
+
+def test_batch_accepts_an_answers_file_with_a_utf8_bom(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    f = batch_answers(tmp_path)
+    f.write_bytes(b"\xef\xbb\xbf" + f.read_bytes())
+    proc = run_batch(run, [str(f), str(a)])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert written(a) == EXPECTED_FILES
+
+
+def test_batch_accepts_crlf_line_endings_written_as_bytes(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    f = tmp_path / "answers.env"
+    f.write_bytes(
+        b"INFISICAL_DOMAIN=https://secrets.example.invalid\r\nINFISICAL_PROJECT_SLUG=proj\r\n"
+        + f"COMMIT_SHA={SHA}\r\n".encode()
+    )
+    proc = run_batch(run, [str(f), str(a)])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    text = (a / ".github/workflows/claude-code-review.yml").read_text(encoding="utf-8")
+    assert SHA in text and "\r" not in text

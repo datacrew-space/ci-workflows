@@ -367,9 +367,13 @@ batch_check() {
 batch_read() {
   local file="$1" line key value n=0
   [[ -f "$file" ]] || batch_die "answers file not found: $file"
+  # An answer missing from the file must be missing, not whatever the environment happens to hold.
+  # shellcheck disable=SC2086
+  unset $BATCH_KEYS
   while IFS= read -r line || [[ -n "$line" ]]; do
     n=$((n + 1))
     line="${line%$'\r'}"
+    (( n == 1 )) && line="${line#$'\xef\xbb\xbf'}"  # a UTF-8 byte order mark from a Windows editor
     [[ -z "${line//[[:space:]]/}" || "$line" =~ ^[[:space:]]*# ]] && continue
     [[ "$line" =~ ^([A-Z_]+)=(.*)$ ]] || batch_die "answers file line $n is not KEY=VALUE (its content is not shown)."
     key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
