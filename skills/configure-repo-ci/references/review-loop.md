@@ -5,9 +5,11 @@
 - The queue is a label (`ready-for-agent`). Before building, name the issue the work belongs to; file
   one first if it is new work.
 - Branch `<type>/<issue>-<slug>` (for example `feat/12-forecast`). The branch name is the flag that
-  ties a worktree to its issue; a SessionStart hook can print that one issue instead of a whole queue.
-- The PR body carries `Closes #N`, or `Refs #N` for partial work. A PreToolUse hook that refuses
-  `gh pr create` without a link turns this from a habit into a guarantee.
+  ties a worktree to its issue; the SessionStart hook `examples/hooks/session_start_issues.py` prints
+  that one issue instead of a whole queue.
+- The PR body carries `Closes #N`, or `Refs #N` for partial work. The PreToolUse hook
+  `examples/hooks/require_issue_link.py` refuses `gh pr create` without a link, which turns this from
+  a habit into a guarantee. Wire both hooks from `examples/hooks/settings.example.json`.
 - `Closes #N` only when the merge itself meets every acceptance criterion. Read the criteria before
   choosing. A criterion that needs a post-merge check (for example "a real bot-initiated review
   reaches a verdict") means `Refs #N`; close the issue by hand after the check, saying what you saw.
@@ -15,9 +17,11 @@
 ## Drafts and the ready signal
 
 - Open PRs as drafts. The review job skips drafts, so early pushes cost nothing.
-- When the work is done, the author adds a `ready-for-review` label. A workflow marks the draft ready
-  once `ci-ok` is green on its head, which starts the review, then removes the label. For a stacked
-  PR it waits until the PR below is ready. A failed flip or a failed label removal fails the job red.
+- When the work is done, the author adds a `ready-for-review` label. The reusable workflow
+  `.github/workflows/ready-when-green.yml` (caller: `examples/ready-when-green-caller.yml`; decision:
+  `scripts/ready_when_green.py`) marks the draft ready once `ci-ok` is green on its head, which starts
+  the review, then removes the label. For a stacked PR it waits until the PR below is ready. A failed
+  flip or a failed label removal fails the job red.
 - That workflow uses `pull_request_target`/`workflow_run`, so it first runs after it merges. Label one
   green draft right after merging and watch that run; until then it is unverified.
 

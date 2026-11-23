@@ -26,8 +26,8 @@
 
 | Mechanism | Use for | Evidence |
 |---|---|---|
-| PreToolUse hook | must-never or must-always at a tool call (PR without an issue link; raw merges) | issue links went from 0 of 2 PRs to every PR after the hook |
-| SessionStart hook | short, bounded context (the current branch's issue, or a capped queue) | silent on error, number and title only, capped lines |
+| PreToolUse hook | must-never or must-always at a tool call (PR without an issue link: `examples/hooks/require_issue_link.py`; raw merges) | issue links went from 0 of 2 PRs to every PR after the hook |
+| SessionStart hook | short, bounded context (the current branch's issue, or a capped queue: `examples/hooks/session_start_issues.py`) | silent on error, number and title only, capped lines |
 | `AGENTS.md` rule | judgement (triage every finding, stacks) | followed when a session remembered; approvals with findings still sat |
 | Workflow | anything that must happen after the session ends | ready-when-green, the review loop |
 
@@ -36,6 +36,10 @@ blocked command, `bash -c '...'` wrappers, credential-injecting wrappers, `cd x 
 different command than the one checked. One fix for a false positive opened a bypass through the
 exact wrapper the repository prescribes. A hook that blocks a legitimate path (for example the only
 API that merges a stack) needs a sanctioned alternative in its message.
+
+Shared Claude Code settings (permissions and hooks every repository should get) live in
+`configs/claude/settings.base.json` and are applied with `scripts/bootstrap_claude_settings.py`; see
+`docs/claude-settings.md`. Start a repository from that base instead of hand-writing its settings.
 
 ## Stateless agents and rediscovery
 

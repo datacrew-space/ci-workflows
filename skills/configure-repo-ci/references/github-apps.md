@@ -6,23 +6,27 @@ repository; read its header before changing anything here.
 
 ## One App per role
 
-| App | Role | Agent token (the agent's step) | Second token (a step with no agent) |
-|---|---|---|---|
-| `ci-code-reviewer` | reviews a PR | contents, pull-requests, **issues**, checks, actions, statuses: read | pull-requests: write, to post the review the agent wrote to a file |
-| `ci-review-responder` | answers a `changes-requested` review | contents read; pull-requests and issues write (its reply); checks, actions, statuses read | contents: write, in a separate push job |
-| `ci-review-orchestrator` | owns the loop: the `review-verdict` status, the "Review loop" comment, the `needs-human` label | none (no agent runs in its job) | statuses, pull-requests, issues: write |
-| `ci-implementer` | builds an issue into a PR (dispatcher) | contents, issues, pull-requests, checks, actions, statuses: read | contents and pull-requests write, issues read, in a separate publish job |
+The roles are the code reviewer (`ci-code-reviewer`), the responder that answers a
+`changes-requested` review (`ci-review-responder`), the orchestrator that owns the `review-verdict`
+status, the "Review loop" comment and the `needs-human` label (`ci-review-orchestrator`), and the
+implementer the dispatcher runs (`IMPLEMENTER_APP_*`, see the README's dispatcher section). The
+permission each App is granted is the table in [`docs/onboarding.md`](../../../docs/onboarding.md#app-permissions),
+which the tests pin; do not copy it here. The per-step `permission-*` inputs in
+`.github/workflows/claude-code-review.yml` and `dispatch-ready-issues.yml` narrow each token from
+that grant.
 
 - No App gets the **Workflows** permission. GitHub then refuses any push that touches
   `.github/workflows/`, a second lock behind the workflow's own protected-path guard
   (`scripts/protected-paths.sh`).
 - The reviewer needs `issues: read`. Without it the linked issue "does not resolve", the Spec axis is
-  skipped on every review, and the reviewer reports it as if the PR were at fault. This
-  repository's reusable workflow does not grant it yet (2026-11-13); add it with a test when you
-  adopt the loop.
-- Do not reuse one role's App for another job's write (for example the orchestrator's token to flip a
-  draft): it blurs the timeline and widens what one leaked key reaches. Accept it only as a written,
-  temporary decision.
+  skipped on every review, and the reviewer reports it as if the PR were at fault. The reusable
+  workflow mints it (`claude-code-review.yml`, the reviewer's `permission-issues: read`); a caller
+  with its own reviewer App must grant it too.
+- `ready-when-green.yml` flips drafts with its own credentials (`READY_APP_ID`,
+  `READY_APP_PRIVATE_KEY`). `docs/onboarding.md` grants the orchestrator the permissions it needs, so
+  the orchestrator App can fill that role; that is a documented choice, not drift.
+- Otherwise, do not reuse one role's App for another job's write: it blurs the timeline and widens
+  what one leaked key reaches. Accept it only as a written, temporary decision.
 
 ## Minting tokens
 

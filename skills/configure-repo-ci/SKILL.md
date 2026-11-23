@@ -7,10 +7,11 @@ description: Set up or audit a repository's CI, CD and branch configuration with
 
 The reference implementation of the review loop is this repository: `.github/workflows/claude-code-review.yml`,
 the scripts in `scripts/`, the prompts in `examples/`, the guards in `docs/guards.md`. Copy shapes from
-there; this skill says which shape, in what order, and what bit us. This repository's own `ci.yml`
-has no aggregate `ci-ok` job and does not run pre-commit: for those two, follow
-[references/baseline.md](references/baseline.md), or the reusable Python CI workflow and its
-scaffold once they are merged here.
+there; this skill says which shape, in what order, and what bit us. For the `ci-ok` gate and
+pre-commit as lint, the mechanics are the reusable workflow `.github/workflows/python-ci.yml`, its
+doc `docs/python-ci.md` and the scaffold `examples/python-uv-repo/`;
+[references/baseline.md](references/baseline.md) says why. This repository's own `ci.yml` is a
+deliberate exception (see [references/known-variations.md](references/known-variations.md)).
 
 ## Steps
 
