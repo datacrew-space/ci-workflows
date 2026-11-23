@@ -24,19 +24,21 @@ USES = re.compile(r"/\.github/workflows/([A-Za-z0-9_.-]+\.ya?ml)@")
 def _calls() -> list[tuple[str, str, str]]:
     """(example file, caller job, reusable workflow file) for every call an example makes into this repo."""
     found = []
-    for path in sorted(EXAMPLES.glob("*.y*ml")):
+    # rglob: an example repository keeps its callers under its own .github/workflows/.
+    for path in sorted(EXAMPLES.rglob("*.y*ml")):
         doc = yaml.safe_load(path.read_text(encoding="utf-8"))
         for name, job in (doc.get("jobs") or {}).items():
             match = USES.search(str(job.get("uses", "")))
             if match and (WF / match.group(1)).exists():
-                found.append((path.name, name, match.group(1)))
+                found.append((path.relative_to(EXAMPLES).as_posix(), name, match.group(1)))
     return found
 
 
 def _granted(example: str, job_name: str) -> dict:
     doc = yaml.safe_load((EXAMPLES / example).read_text(encoding="utf-8"))
     job = doc["jobs"][job_name]
-    # A job-level block replaces the workflow-level one; it does not add to it.
+    # A job-level block replaces the workflow-level one; it does not add to it. Stricter than GitHub on
+    # purpose: an example must spell its scopes out, so no `read-all` string and no missing block.
     granted = job["permissions"] if "permissions" in job else doc.get("permissions")
     assert isinstance(granted, dict), f"{example}: job {job_name} must state its permissions as a mapping"
     return granted
