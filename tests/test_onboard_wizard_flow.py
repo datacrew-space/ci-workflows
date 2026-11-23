@@ -291,3 +291,156 @@ def test_when_the_secret_list_fails_the_wizard_asks_instead_of_overwriting(run):
     assert proc.returncode == 0, proc.stderr
     assert "gh secret set" not in run.calls()
     assert "left as they were" in proc.stdout
+
+
+# ---- batch mode -----------------------------------------------------------------------------------
+
+
+def batch_answers(tmp_path: Path, **overrides: str) -> Path:
+    values = {
+        "INFISICAL_DOMAIN": "https://secrets.example.invalid",
+        "INFISICAL_PROJECT_SLUG": "proj",
+        "COMMIT_SHA": SHA,
+    }
+    values.update(overrides)
+    f = tmp_path / "answers.env"
+    f.write_text("# one set of answers\n" + "".join(f"{k}={v}\n" for k, v in values.items()), encoding="utf-8")
+    return f
+
+
+def make_checkout(tmp_path: Path, name: str) -> Path:
+    d = tmp_path / name
+    (d / ".git").mkdir(parents=True)
+    return d
+
+
+def run_batch(run: Run, args: list[str]) -> subprocess.CompletedProcess:
+    env = {k: v for k, v in os.environ.items() if k not in ("SHELLOPTS", "GH_REPO")}
+    env.update(
+        PATH=f"{run.dir.as_posix()}{os.pathsep}{env['PATH']}",
+        STUB_DIR=run.dir.as_posix(),
+        STUB_LOG=run.log.as_posix(),
+    )
+    return run_wizard(["bash", str(WIZARD), "--batch", *args], [], env)
+
+
+def written(checkout: Path) -> list[str]:
+    return sorted(
+        p.relative_to(checkout).as_posix() for p in checkout.rglob("*") if p.is_file() and ".git/" not in p.as_posix()
+    )
+
+
+EXPECTED_FILES = [
+    ".agents/agents/code-reviewer.md",
+    ".agents/agents/review-responder.md",
+    ".github/workflows/claude-code-review.yml",
+]
+
+
+def test_batch_writes_the_caller_and_both_prompts_into_every_checkout(run, tmp_path):
+    a, b = make_checkout(tmp_path, "one"), make_checkout(tmp_path, "two")
+    proc = run_batch(run, [str(batch_answers(tmp_path)), str(a), str(b)])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    for d in (a, b):
+        assert written(d) == EXPECTED_FILES
+        text = (d / ".github/workflows/claude-code-review.yml").read_text(encoding="utf-8")
+        assert SHA in text and "secrets.example.invalid" in text and "<COMMIT_SHA>" not in text
+        yaml.safe_load(text)
+
+
+def test_batch_refuses_to_overwrite_without_an_explicit_yes(run, tmp_path):
+    a, b = make_checkout(tmp_path, "one"), make_checkout(tmp_path, "two")
+    mine = a / ".agents/agents/code-reviewer.md"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("MY CUSTOM REVIEWER\n", encoding="utf-8")
+    proc = run_batch(run, [str(batch_answers(tmp_path)), str(a), str(b)])
+    assert proc.returncode == 1  # something was left as it was
+    assert mine.read_text(encoding="utf-8") == "MY CUSTOM REVIEWER\n"
+    assert "left as it was" in proc.stdout + proc.stderr
+    # the other files and the other checkout are still written
+    assert (a / ".github/workflows/claude-code-review.yml").is_file()
+    assert written(b) == EXPECTED_FILES
+
+
+def test_batch_overwrites_only_with_the_overwrite_flag(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    mine = a / ".agents/agents/code-reviewer.md"
+    mine.parent.mkdir(parents=True)
+    mine.write_text("MY CUSTOM REVIEWER\n", encoding="utf-8")
+    proc = run_batch(run, [str(batch_answers(tmp_path)), "--overwrite", str(a)])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert mine.read_text(encoding="utf-8") != "MY CUSTOM REVIEWER\n"
+
+
+def test_batch_commits_pushes_and_enables_nothing(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    proc = run_batch(run, [str(batch_answers(tmp_path)), str(a)])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    calls = run.calls()
+    assert "secret set" not in calls and "variable set" not in calls
+    assert not list(run.dir.glob("stdin.*"))
+    assert not (a / ".git" / "COMMIT_EDITMSG").exists() and not list((a / ".git").iterdir())
+
+
+def test_batch_refuses_a_secret_in_the_answers_file_and_never_shows_it(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    answers_file = batch_answers(tmp_path, INFISICAL_CLIENT_SECRET=CLIENT_SECRET)
+    proc = run_batch(run, [str(answers_file), str(a)])
+    assert proc.returncode == 1
+    assert CLIENT_SECRET not in proc.stdout + proc.stderr + run.calls()
+    assert written(a) == []
+
+
+def test_batch_does_not_echo_a_malformed_line(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    answers_file = tmp_path / "answers.env"
+    answers_file.write_text(f"just {CLIENT_SECRET} words\n", encoding="utf-8")
+    proc = run_batch(run, [str(answers_file), str(a)])
+    assert proc.returncode == 1
+    assert CLIENT_SECRET not in proc.stdout + proc.stderr
+
+
+def test_batch_writes_nothing_when_one_path_is_not_a_checkout(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    proc = run_batch(run, [str(batch_answers(tmp_path)), str(a), str(tmp_path / "missing")])
+    assert proc.returncode == 1
+    assert "not a git checkout" in proc.stdout + proc.stderr
+    assert written(a) == []
+
+
+def test_batch_rejects_an_invalid_answer_before_writing(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    proc = run_batch(run, [str(batch_answers(tmp_path, COMMIT_SHA="main")), str(a)])
+    assert proc.returncode == 1
+    assert "COMMIT_SHA" in proc.stdout + proc.stderr
+    assert written(a) == []
+
+
+def test_batch_custom_responder_uses_the_given_id_without_asking_gh(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    answers_file = batch_answers(tmp_path, RESPONDER_LOGIN="acme-responder", RESPONDER_ID="777")
+    proc = run_batch(run, [str(answers_file), str(a)])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    with_ = yaml.safe_load((a / ".github/workflows/claude-code-review.yml").read_text(encoding="utf-8"))["jobs"][
+        "review"
+    ]["with"]
+    assert with_["responder-bot-login"] == "acme-responder"
+    assert with_["responder-bot-id"] == "777"
+    assert run.calls().strip() == ""
+
+
+def test_batch_custom_responder_without_an_id_looks_it_up_read_only(run, tmp_path):
+    a = make_checkout(tmp_path, "one")
+    proc = run_batch(run, [str(batch_answers(tmp_path, RESPONDER_LOGIN="acme-responder")), str(a)])
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    with_ = yaml.safe_load((a / ".github/workflows/claude-code-review.yml").read_text(encoding="utf-8"))["jobs"][
+        "review"
+    ]["with"]
+    assert with_["responder-bot-id"] == "4242"
+    assert all(line.startswith("gh api ") for line in run.calls().splitlines())
+
+
+def test_batch_with_no_checkouts_prints_usage(run, tmp_path):
+    proc = run_batch(run, [str(batch_answers(tmp_path))])
+    assert proc.returncode == 2
+    assert "usage" in proc.stdout + proc.stderr
