@@ -107,6 +107,8 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 `ready-for-review-label` (default `ready-for-review`: see below),
 `owner-handle` (empty = repository owner) and `mention-owner`, `draft` (default `true`: see below),
 `dispatch-limit` (default 2),
+`uv-version` and `python-version` (install uv before `setup-command`; empty installs nothing, so set
+`uv-version` when your setup or the agent's tools call `uv` and the runner image has none),
 `setup-command` (for example `uv sync --frozen`), `extra-allowed-tools`, `extra-protected-paths`,
 `mcp-config` and `mcp-allowed-tools` (an MCP server for the agent; **off by default**), and
 `secret-source` (`github` by default, or `infisical` with `infisical-domain`, `infisical-project-slug`,
