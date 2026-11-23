@@ -29,7 +29,7 @@ Read protection with `gh api repos/OWNER/REPO/branches/BRANCH/protection` and `.
 | Variation | Why it is fine |
 |---|---|
 | Advisory single-job review (Claude App via OIDC, comment only) instead of the full loop | The loop is still a pilot; copying it multiplies its open bugs. Advisory review never blocks. |
-| A public tooling repository requires its few jobs by name and runs on hosted runners | Public code must not run on self-hosted runners; with three jobs an aggregate is optional. |
+| A public tooling repository requires its few jobs by name and runs on hosted runners, and runs its guards as a job instead of pre-commit in CI | Public code must not run on self-hosted runners; with three jobs an aggregate is optional. Its pre-commit hooks still run locally on every commit. |
 | Packages release on a version tag; a static site deploys on push to the default branch | Those are the only artifacts CD'd from Actions. |
 | Service hosts deploy from their canonical checkout by a deploy script, outside CI | Deploys need the host, its secrets and a reviewed compose file. |
 | No protection on a free personal account's private repository | Not available on that plan. Compensate with merge discipline and the review status. |

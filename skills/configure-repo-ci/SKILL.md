@@ -11,7 +11,9 @@ there; this skill says which shape, in what order, and what bit us. For the `ci-
 pre-commit as lint, the mechanics are the reusable workflow `.github/workflows/python-ci.yml`, its
 doc `docs/python-ci.md` and the scaffold `examples/python-uv-repo/`;
 [references/baseline.md](references/baseline.md) says why. This repository's own `ci.yml` is a
-deliberate exception (see [references/known-variations.md](references/known-variations.md)).
+deliberate exception: it requires its jobs by name on hosted runners and does not run pre-commit in
+CI (see the "public tooling repository" row in
+[references/known-variations.md](references/known-variations.md)).
 
 ## Steps
 
@@ -48,7 +50,9 @@ deliberate exception (see [references/known-variations.md](references/known-vari
 - **Give the reviewer `issues: read`**, or the Spec half of every review is silently skipped.
 - **One secret per fetch.** Fetch each credential by name; a folder fetch leaves other roles'
   secrets in an agent's environment.
-- **Read the switch-on order before flipping a variable**: set a dispatch limit of 1 before enabling.
+- **Read the switch-on order before flipping a variable**: in the caller of
+  `.github/workflows/dispatch-ready-issues.yml`, set the `dispatch-limit` input to 1 (it defaults to
+  2) before setting `ISSUE_DISPATCH_ENABLED=true`.
 - **`Closes #N` only when every acceptance criterion is met by the merge.** A criterion that needs a
   post-merge check means `Refs #N`, closed by hand after the check.
 - **A rerun is not a test of a workflow fix**: it reuses the original workflow file. A human-triggered

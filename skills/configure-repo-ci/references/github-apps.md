@@ -10,8 +10,9 @@ The roles are the code reviewer (`ci-code-reviewer`), the responder that answers
 `changes-requested` review (`ci-review-responder`), the orchestrator that owns the `review-verdict`
 status, the "Review loop" comment and the `needs-human` label (`ci-review-orchestrator`), and the
 implementer the dispatcher runs (`IMPLEMENTER_APP_*`, see the README's dispatcher section). The
-permission each App is granted is the table in [`docs/onboarding.md`](../../../docs/onboarding.md#app-permissions),
-which the tests pin; do not copy it here. The per-step `permission-*` inputs in
+permission each App is granted is the table in [`docs/onboarding.md`](../../../docs/onboarding.md#app-permissions);
+do not copy it here. The tested source is the wizard's `app_perms` in `scripts/onboard-review-loop.sh`,
+which `tests/test_onboard_wizard.py` pins against the minted `permission-*` inputs. The per-step `permission-*` inputs in
 `.github/workflows/claude-code-review.yml` and `dispatch-ready-issues.yml` narrow each token from
 that grant.
 
