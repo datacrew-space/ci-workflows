@@ -31,17 +31,21 @@ def floor() -> str:
 
 def test_renovate_does_not_bump_python_in_workflows():
     config = json.loads((ROOT / "renovate.json").read_text())
-    rules = [{k: r[k] for k in FLOOR_RULE if k in r} for r in config["packageRules"]]
+    rules = [{k: r[k] for k in FLOOR_RULE if k in r} for r in config.get("packageRules", [])]
     assert FLOOR_RULE in rules
 
 
 def test_setup_python_steps_run_on_the_floor():
     versions = {}
-    for name in ("ci.yml", "guards.yml"):
-        doc = yaml.safe_load((WORKFLOWS / name).read_text())
+    for path in sorted(WORKFLOWS.glob("*.yml")):
+        doc = yaml.safe_load(path.read_text())
         for job_id, job in doc["jobs"].items():
             for step in job.get("steps", []):
-                if step.get("uses", "").startswith("actions/setup-python"):
-                    versions[f"{name}:{job_id}"] = step["with"]["python-version"]
+                if not step.get("uses", "").startswith("actions/setup-python"):
+                    continue
+                version = str(step["with"]["python-version"])
+                # Reusable workflows take the version from their caller.
+                if "${{" not in version:
+                    versions[f"{path.name}:{job_id}"] = version
     assert versions, "no setup-python step found"
     assert set(versions.values()) == {floor()}, versions
