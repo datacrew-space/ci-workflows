@@ -26,7 +26,8 @@ name: Claude mention (reusable)
 # No fork refusal here, unlike letta-code.yml. The action restores its own configuration from the
 # base branch, not from the pull request, `restrict_untrusted_prs` limits its tools for authors without
 # write access, and only the allowed associations can summon it. What is left is prompt injection from
-# the content of a fork's pull request. There is no input to allow fork pull requests.
+# the content of a fork's pull request. The action runs on fork pull requests (its `allow_fork_prs` defaults to true) and this workflow has no
+# input to change that.
 #
 # Security: the job holds the Claude Code OAuth token once Claude is summoned, and reads issue, pull
 # request and comment text that anyone may have written. No secret and no event text is written into a
@@ -167,12 +168,13 @@ jobs:
           fi
           echo "act=$act" >> "$GITHUB_OUTPUT"
 
+      # The action fetches with the checkout's stored credential, then replaces it with its own token, so
+      # do not set `persist-credentials: false` here.
       - name: Checkout repository
         if: ${{ steps.act.outputs.act == 'true' }}
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 1
-          persist-credentials: false
 
       - name: Fetch the Claude Code OAuth token
         if: ${{ steps.act.outputs.act == 'true' }}

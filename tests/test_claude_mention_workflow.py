@@ -225,7 +225,7 @@ def test_the_job_is_decide_checkout_fetch_token_run_claude(job):
     for step in (checkout, token, claude):
         assert step["if"] == WAITS, step["name"]
     assert checkout["uses"].startswith("actions/checkout@")
-    assert checkout["with"] == {"fetch-depth": 1, "persist-credentials": False}
+    assert checkout["with"] == {"fetch-depth": 1}
     assert token["uses"].startswith("Infisical/secrets-action@")
     assert token["with"]["secret-name"] == "CLAUDE_CODE_OAUTH_TOKEN", "fetch one secret, not the folder"
     assert claude["uses"].startswith("anthropics/claude-code-action@")
