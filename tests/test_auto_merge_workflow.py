@@ -226,11 +226,44 @@ def test_the_example_caller_has_no_job_level_if_that_could_skip_a_run():
     assert "if" not in job
     assert job["uses"].startswith("datacrew-space/ci-workflows/.github/workflows/auto-merge.yml@")
     types = set(caller[True]["pull_request_target"]["types"])
-    assert {"labeled", "unlabeled", "ready_for_review", "converted_to_draft", "reopened", "closed"} <= types
+    assert {"labeled", "unlabeled", "ready_for_review", "converted_to_draft", "reopened"} <= types
+    assert "closed" not in types, "GitHub clears auto-merge on close, and the script ignores closed pull requests"
     assert job["permissions"] == {"contents": "write", "pull-requests": "write"}
 
 
-def test_the_readme_says_the_repository_setting_must_be_on_and_why():
-    readme = (ROOT / "README.md").read_text(encoding="utf-8")
-    assert "auto-merge.yml" in readme
-    assert "Allow auto-merge" in readme
+def test_the_readme_states_the_setting_and_every_consequence():
+    section = (ROOT / "README.md").read_text(encoding="utf-8").split("### Label-gated auto-merge", 1)[1]
+    section = " ".join(section.split("\n### ", 1)[0].split())
+    assert "Allow auto-merge" in section
+    assert "refuses" in section and "fails" in section  # the reason it must be on first
+    assert "fails on every labelled pull request" not in section
+    assert "merges at once" in section and "no required checks" in section  # labelling can merge immediately
+    assert "no `push` workflows" in section  # a GITHUB_TOKEN merge starts no release or deploy workflow
+
+
+def test_the_step_is_bash_and_cannot_swallow_a_failure(doc):
+    step = doc["jobs"]["reconcile"]["steps"][1]
+    assert step["shell"] == "bash"  # the runner then adds pipefail, so a failing script fails the tee pipeline
+    assert "||" not in step["run"]
+    assert "continue-on-error" not in step and "continue-on-error" not in doc["jobs"]["reconcile"]
+
+
+def test_the_log_does_not_claim_auto_merge_was_enabled(tmp_path):
+    done, _ = run_script(tmp_path, pr())
+    assert "auto-merge enabled" not in done.stdout
+    assert "merges at once if already mergeable" in done.stdout
+
+
+def test_labels_match_without_regard_to_case(tmp_path):
+    _, merges = run_script(tmp_path / "a", pr(labels=("AutoMerge",)))
+    assert merges == [ARM]
+    _, merges = run_script(tmp_path / "b", pr(labels=("automerge",)), AUTOMERGE_LABEL="AUTOMERGE")
+    assert merges == [ARM]
+    _, merges = run_script(tmp_path / "c", pr(labels=("AUTOMERGE",), armed=True))
+    assert merges == []
+
+
+def test_a_non_ascii_digit_is_not_a_pull_request_number(tmp_path):
+    done, merges = run_script(tmp_path, pr(), PR_NUMBER="٧")  # Arabic-indic seven
+    assert done.returncode == 1
+    assert merges == []

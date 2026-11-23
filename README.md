@@ -209,18 +209,28 @@ branch's required checks pass. The decision is `scripts/auto_merge.py`, fetched 
 other decision scripts; it reads the pull request's live state, not the event, so every run converges.
 
 **Setup.** First turn on the repository setting **Allow auto-merge** (Settings, General, Pull Requests).
-It must be on before a caller is enabled: with it off GitHub refuses the merge request, and the workflow
-fails on every labelled pull request. Auto-merge also only waits for checks the branch actually requires, so
-protect the branch with the required checks you want before relying on it. Then copy
-[`examples/auto-merge-caller.yml`](examples/auto-merge-caller.yml) and pin the SHA.
+It must be on before a caller is enabled: with it off GitHub refuses the auto-merge request, so the step
+fails on each pull request that qualifies.
+
+Two things to know before labelling anything:
+
+- **Labelling can merge at once.** `gh pr merge --auto` merges at once when the pull request is
+  already mergeable (clean, or only unstable or hooked). With no required checks on the branch there is
+  nothing to wait for, so adding the label merges the pull request right then. Protect the branch with the
+  required checks you want first.
+- **Warning: a merge made with the workflow token starts no `push` workflows.** GitHub withholds
+  workflow runs for events caused by `GITHUB_TOKEN`, so release, deploy or post-merge CI that triggers on
+  `push` to the base branch will not run for these merges. Do not rely on them for anything that must run
+  after a merge.
+
+Then copy [`examples/auto-merge-caller.yml`](examples/auto-merge-caller.yml) and pin the SHA.
 
 **Inputs.** `runs-on`, `tooling-ref`, `label` (default `automerge`), `merge-method` (`squash`, `merge` or
 `rebase`; default `squash`).
 
 **Security model.** `pull_request_target` runs the caller file from the default branch; the job checks out
 only this tooling repository and never the pull request. The job's token has `contents: write` and
-`pull-requests: write`, the least `gh pr merge --auto` needs. A merge made with the workflow token starts no
-further workflows.
+`pull-requests: write`, the least `gh pr merge --auto` needs.
 
 **Open question, not answered here.** Whether a job skipped by its `if:` can displace a pending run in a
 job-level concurrency group has not been observed on a real pull request. The example caller sidesteps it:

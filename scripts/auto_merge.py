@@ -2,7 +2,8 @@
 
 Reads the pull request's live state, never the event that started the run, then does exactly one of:
 
-  - open, not a draft, carries the label, auto-merge off  -> enable auto-merge
+  - open, not a draft, carries the label, auto-merge off  -> request auto-merge (`gh pr merge --auto`
+                                                              merges at once if the PR is already mergeable)
   - open and no longer qualifies, auto-merge on           -> disable auto-merge
   - anything else                                         -> nothing
 
@@ -36,7 +37,8 @@ def decide(pr: dict, label: str) -> str:
     """Return "enable", "disable" or "none" for the pull request's live state."""
     if pr["state"] != "OPEN":
         return "none"
-    qualifies = not pr["isDraft"] and label in {entry["name"] for entry in pr["labels"]}
+    names = {entry["name"].casefold() for entry in pr["labels"]}  # GitHub label names are case-insensitive
+    qualifies = not pr["isDraft"] and label.casefold() in names
     armed = pr["autoMergeRequest"] is not None
     if qualifies and not armed:
         return "enable"
@@ -71,7 +73,7 @@ def _run_gh(args: list[str]) -> str:
 
 
 def reconcile(run_gh: RunGh, number: str, label: str, method: str) -> str:
-    if not number.isdigit():
+    if not (number.isascii() and number.isdigit()):
         raise AutoMergeError("PR_NUMBER is not a number")
     if method not in METHODS:
         raise AutoMergeError(f"MERGE_METHOD must be one of {', '.join(METHODS)}")
@@ -93,7 +95,7 @@ def main(run_gh: RunGh = _run_gh) -> int:
         sys.stderr.write(f"auto_merge: {err}\n")
         return 1
     messages = {
-        "enable": f"auto-merge enabled on #{number} ({method})",
+        "enable": f"requested auto-merge on #{number} ({method}); gh merges at once if already mergeable",
         "disable": f"auto-merge disabled on #{number}: it no longer qualifies",
         "none": f"nothing to change on #{number}",
     }
