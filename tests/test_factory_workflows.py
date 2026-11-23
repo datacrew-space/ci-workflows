@@ -297,6 +297,44 @@ def test_agent_prs_open_as_drafts_unless_the_caller_opts_out(jobs, inputs):
     assert '[ "$DRAFT" = "true" ] && draft_flag=(--draft)' in push["run"]
 
 
+def test_the_finished_label_is_an_input_that_matches_ready_when_green(inputs):
+    """ready-when-green flips only a draft that carries its `ready-label`; the two defaults must agree."""
+    ready_default = load(READY)[True]["workflow_call"]["inputs"]["ready-label"]["default"]
+    assert inputs["ready-for-review-label"]["default"] == ready_default == "ready-for-review"
+
+
+def test_the_dispatcher_labels_the_draft_it_opened(jobs):
+    """The agent has finished before publish opens the PR, so nobody else is left to add the label."""
+    steps = jobs["publish"]["steps"]
+    names = [s.get("id") for s in steps]
+    assert names.index("label") > names.index("push")
+    push_run = step(jobs["publish"], "push")["run"]
+    assert 'echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"' in push_run
+    # A pipe after `gh pr create` would hide its failure (the step runs without pipefail), and only the
+    # last line it printed may reach $GITHUB_OUTPUT.
+    assert '"${draft_flag[@]}")\n' in push_run
+    assert "pr_url=\"${pr_url##*$'\\n'}\"" in push_run
+    # A create that printed no URL would skip the label step and leave a draft nothing picks up.
+    assert 'if [ -z "$pr_url" ]; then' in push_run
+    label = step(jobs["publish"], "label")
+    # Only a draft, only when a PR was opened, and an empty label turns the step off.
+    assert label["if"] == (
+        "${{ steps.push.outputs.pr-url != '' && inputs.draft && inputs.ready-for-review-label != '' }}"
+    )
+    # The app token, so the `labeled` event starts ready-when-green (GITHUB_TOKEN events start nothing).
+    assert label["env"]["GH_TOKEN"] == "${{ steps.push-token.outputs.token }}"
+    assert label["env"]["READY_FOR_REVIEW_LABEL"] == "${{ inputs.ready-for-review-label }}"
+    assert "${{" not in label["run"]  # the label name and the PR URL reach the shell only through env
+
+
+def test_the_finished_label_is_created_where_the_token_may_create_it(jobs):
+    """The publish token has no issues: write; the select job's default token does, and runs no agent."""
+    claim = step(jobs["select"], "claim")
+    assert claim["env"]["READY_FOR_REVIEW_LABEL"] == "${{ inputs.ready-for-review-label }}"
+    assert 'gh label create "$READY_FOR_REVIEW_LABEL"' in claim["run"]
+    assert '[ -n "$READY_FOR_REVIEW_LABEL" ]' in claim["run"]
+
+
 def test_the_claim_is_serialised_inside_the_reusable_workflow(jobs):
     """The guard must not live only in an example caller: two overlapping runs would claim one issue twice."""
     concurrency = jobs["select"]["concurrency"]
@@ -449,6 +487,66 @@ def test_report_still_hands_over_the_rest_when_one_relabel_fails(tmp_path):
     code, calls = run_report(tmp_path, FAIL_EDIT="5")
     assert code == 1
     assert handed_over(calls) == ["5", "6"]
+
+
+# --- The label step of the publish job, run for real with a stub `gh` ----------------------------------
+
+LABEL_GH_STUB = """#!/bin/sh
+echo "$*" >> "$GH_LOG"
+[ "${FAIL_LABEL:-}" = 1 ] && exit 1
+exit 0
+"""
+
+
+def run_label(tmp_path, pr_url, **extra_env):
+    import os
+    import subprocess
+
+    script = step(load(DISPATCH)["jobs"]["publish"], "label")["run"]
+    (tmp_path / "gh").write_text(LABEL_GH_STUB, encoding="utf-8", newline="\n")
+    (tmp_path / "gh").chmod(0o755)
+    (tmp_path / "label.sh").write_text(script, encoding="utf-8", newline="\n")
+    log = tmp_path / "gh.log"
+    env = {
+        **os.environ,
+        "PATH": f"{tmp_path}{os.pathsep}{os.environ['PATH']}",
+        "GH_LOG": str(log),
+        "GH_TOKEN": "x",
+        "REPO": "o/r",
+        "PR_URL": pr_url,
+        "READY_FOR_REVIEW_LABEL": "ready-for-review",
+        "GITHUB_STEP_SUMMARY": str(tmp_path / "summary.md"),
+        **extra_env,
+    }
+    done = subprocess.run(["bash", "-e", str(tmp_path / "label.sh")], capture_output=True, env=env, check=False)
+    calls = log.read_text(encoding="utf-8").splitlines() if log.exists() else []
+    return done.returncode, calls, done.stdout.decode()
+
+
+def test_the_label_step_labels_the_pr_the_push_step_opened(tmp_path):
+    code, calls, _ = run_label(tmp_path, "https://github.com/o/r/pull/12")
+    assert code == 0
+    assert calls == ["api --method POST repos/o/r/issues/12/labels -f labels[]=ready-for-review"]
+
+
+def test_a_failed_labelling_is_visible_and_says_what_to_do(tmp_path):
+    """The PR is already open; a silent miss would leave it a draft that nothing ever picks up."""
+    code, calls, out = run_label(tmp_path, "https://github.com/o/r/pull/12", FAIL_LABEL="1")
+    assert code == 1
+    assert len(calls) == 1
+    assert "::error::" in out
+    assert "ready-for-review" in out
+    assert "do not re-run" in out  # a re-run pushes a new branch and opens a second PR
+
+
+@pytest.mark.parametrize(
+    "pr_url", ["", "https://github.com/o/r/pull/", "https://github.com/o/r/pull/12/files", "12; id"]
+)
+def test_the_label_step_refuses_anything_that_is_not_a_pr_number(tmp_path, pr_url):
+    code, calls, out = run_label(tmp_path, pr_url)
+    assert code == 1
+    assert calls == []
+    assert "::error::" in out
 
 
 # --- The allowed-bots validation in the review workflow, run for real ---------------------------------
