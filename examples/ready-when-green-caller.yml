@@ -1,0 +1,41 @@
+name: Ready when green
+
+# Copy to .github/workflows/ready-when-green.yml. Pin BOTH the `uses:` ref and `tooling-ref` to the same
+# commit SHA of datacrew-space/ci-workflows. The caller owns the triggers, and pull_request_target and
+# workflow_run run THIS file from the default branch, so a pull request cannot edit it to run its own
+# code with the token. Do not add a checkout of the pull request here.
+
+on:
+  workflow_run:
+    workflows: [CI] # the name of your CI workflow, the one that produces the `ci-check` check
+    types: [completed]
+  pull_request_target:
+    types: [labeled, ready_for_review]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ready-when-green
+  cancel-in-progress: false
+
+jobs:
+  sweep:
+    # Same-repository only. Only the label (and a PR becoming ready, so a stack cascades) does anything.
+    if: >-
+      ${{ vars.READY_WHEN_GREEN_ENABLED == 'true' &&
+      (github.event_name != 'pull_request_target' || github.event.action == 'ready_for_review' || github.event.label.name == 'ready-for-review') &&
+      (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}
+    # The label name in the `if:` above must match the `ready-label` input.
+    uses: datacrew-space/ci-workflows/.github/workflows/ready-when-green.yml@<COMMIT_SHA>
+    permissions:
+      contents: read
+    with:
+      tooling-ref: <COMMIT_SHA>
+      # ready-label: ready-for-review
+      # ci-check: ci-ok                       # a required check that goes green only when CI passed
+      # runs-on: '"ubuntu-latest"'
+      # secret-source: infisical              # optional; then pass INFISICAL_CLIENT_ID/_SECRET instead
+    secrets:
+      READY_APP_ID: ${{ secrets.READY_APP_ID }}
+      READY_APP_PRIVATE_KEY: ${{ secrets.READY_APP_PRIVATE_KEY }}

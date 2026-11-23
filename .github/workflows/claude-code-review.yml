@@ -20,7 +20,7 @@ name: Claude Code Review (reusable)
 # Everything environment-specific is an input or a secret of the CALLER: the secret store
 # coordinates, the runner labels, the agent prompt paths. Nothing here names a host or an account.
 # The helper scripts (guard, scanner, report) are NOT read from the repository under review: the
-# `tooling` step checks out THIS repository at `tooling-ref`, so a PR can never weaken the gate that
+# `Locate the tooling` step fetches THIS repository at `tooling-ref`, so a PR can never weaken the gate that
 # grades it. Pin `tooling-ref` and the `uses:` ref to the same commit SHA.
 #
 # The caller supplies, in its secret store (Infisical): CLAUDE_CODE_OAUTH_TOKEN under
@@ -116,6 +116,13 @@ on:
         description: Path of the responder prompt. Read from the BASE branch, like reviewer-agent.
         type: string
         default: .agents/agents/review-responder.md
+      allowed-bots:
+        description: >-
+          Comma-separated logins (no `[bot]`) of EVERY other bot that opens or pushes PRs in the calling
+          repository, e.g. the issue dispatcher's app. The review responder is always allowed. A bot not
+          listed makes the review action refuse to start. Never `*`.
+        type: string
+        default: ""
     secrets:
       INFISICAL_CLIENT_ID:
         required: true
@@ -160,17 +167,31 @@ jobs:
             exit 1
           fi
 
-      # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
-      - name: Fetch the review-loop tooling
-        uses: actions/checkout@v7
-        with:
-          repository: datacrew-space/ci-workflows
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ runner.temp }}/ci-tooling
-          persist-credentials: false
+      # allowed-bots goes into the action's allowed_bots list. Only named bot logins are accepted:
+      # never `*`, which would let any bot start a review.
+      - name: Validate the allowed-bots input
+        env:
+          ALLOWED_BOTS: ${{ inputs.allowed-bots }}
+        run: |
+          if [ -n "$ALLOWED_BOTS" ] && ! [[ "$ALLOWED_BOTS" =~ ^[A-Za-z0-9-]+(,[A-Za-z0-9-]+)*$ ]]; then
+            echo "::error::allowed-bots must be comma-separated bot logins ([A-Za-z0-9-]+), never '*'"
+            exit 1
+          fi
 
+      # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
+      # actions/checkout only accepts a path inside the workspace, and the workspace is where the agent
+      # may write, so the tooling is fetched by hand into the runner temp dir. The repository is public:
+      # no credentials are needed or sent. TOOLING is defined here, once per job.
       - name: Locate the tooling
-        run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
 
       # The prompt the agent follows comes from the BASE branch, never from this PR: a PR that edits
       # its own agent file would otherwise change how it is reviewed. Validated, then copied out of
@@ -254,6 +275,7 @@ jobs:
           repositories: ${{ github.event.repository.name }}
           permission-contents: read
           permission-pull-requests: read
+          permission-issues: read # the Spec axis reads the issue a PR closes; without it every review skips that axis
           permission-checks: read
           permission-actions: read
           permission-statuses: read # `gh pr checks` reads commit statuses too; read-only, so no forged verdict
@@ -281,7 +303,7 @@ jobs:
           # The responder's push re-triggers this workflow as a bot actor; the action refuses bot
           # actors unless they are listed here. Rounds are capped by the event sender: the review
           # after a responder push is round 2, the last (see the `verdict` step).
-          allowed_bots: ${{ inputs.responder-bot-login }}
+          allowed_bots: ${{ inputs.allowed-bots && format('{0},{1}', inputs.responder-bot-login, inputs.allowed-bots) || inputs.responder-bot-login }}
           # Read-only tools plus the gh/git calls a review needs, and writes ONLY under REVIEW_DIR.
           # The git rules have no `*`: Claude Code reads a rule without `*` as one exact command,
           # while `git diff:*` admitted `--output=FILE` and `git fetch:*` admitted `--upload-pack=CMD`
@@ -546,16 +568,19 @@ jobs:
           fi
 
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
-      - name: Fetch the review-loop tooling
-        uses: actions/checkout@v7
-        with:
-          repository: datacrew-space/ci-workflows
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ runner.temp }}/ci-tooling
-          persist-credentials: false
-
+      # actions/checkout only accepts a path inside the workspace, and the workspace is where the agent
+      # may write, so the tooling is fetched by hand into the runner temp dir. The repository is public:
+      # no credentials are needed or sent. TOOLING is defined here, once per job.
       - name: Locate the tooling
-        run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
 
       - name: Checkout the reviewed commit
         uses: actions/checkout@v7
@@ -718,16 +743,19 @@ jobs:
     steps:
       # The reviewed commit (not the branch tip), no stored credentials; contains no agent output.
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
-      - name: Fetch the review-loop tooling
-        uses: actions/checkout@v7
-        with:
-          repository: datacrew-space/ci-workflows
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ runner.temp }}/ci-tooling
-          persist-credentials: false
-
+      # actions/checkout only accepts a path inside the workspace, and the workspace is where the agent
+      # may write, so the tooling is fetched by hand into the runner temp dir. The repository is public:
+      # no credentials are needed or sent. TOOLING is defined here, once per job.
       - name: Locate the tooling
-        run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
 
       - name: Checkout the reviewed commit
         uses: actions/checkout@v7
@@ -836,16 +864,19 @@ jobs:
       contents: read
     steps:
       # The helper scripts come from THIS repository at a pinned ref, never from the PR under review.
-      - name: Fetch the review-loop tooling
-        uses: actions/checkout@v7
-        with:
-          repository: datacrew-space/ci-workflows
-          ref: ${{ inputs.tooling-ref }}
-          path: ${{ runner.temp }}/ci-tooling
-          persist-credentials: false
-
+      # actions/checkout only accepts a path inside the workspace, and the workspace is where the agent
+      # may write, so the tooling is fetched by hand into the runner temp dir. The repository is public:
+      # no credentials are needed or sent. TOOLING is defined here, once per job.
       - name: Locate the tooling
-        run: echo "TOOLING=$RUNNER_TEMP/ci-tooling" >> "$GITHUB_ENV"
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
 
       - name: Fetch CI_REVIEW_ORCHESTRATOR_APP_ID
         uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18

@@ -1,0 +1,1 @@
+This conversation was just compacted. Before continuing: if the summary names a handoff or plan file for this workstream, read it again and treat it as the source of truth where it disagrees with the summary. Re-check the state of any PR, branch or worktree before acting on it. If the current item is finished, tell the user this is a good point to write a handoff and run /clear.
