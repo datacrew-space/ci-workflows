@@ -44,7 +44,7 @@ other permission at *No access*, turn the webhook off, and install on the target
 |-----|------------------------|
 | `ci-code-reviewer` | Contents: read. Pull requests: read and write. Issues: read. Checks: read. Actions: read. Commit statuses: read |
 | `ci-review-responder` | Contents: read and write. Pull requests: read and write. Issues: read and write. Checks: read. Actions: read. Commit statuses: read |
-| `ci-review-orchestrator` | Commit statuses: read and write. Pull requests: read and write. Issues: read and write |
+| `ci-review-orchestrator` | Commit statuses: read and write. Pull requests: read and write. Issues: read and write. Checks: read. Contents: read. Actions: read (`ready-when-green` reads each PR's check rollup; without them the token mints but `gh pr list --json statusCheckRollup` fails) |
 
 Only the responder's name matters to the workflow: it matches that bot login (and uses the bot's
 numeric user id as the commit author). Both are caller inputs, `responder-bot-login` and

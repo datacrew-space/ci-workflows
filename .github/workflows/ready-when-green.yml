@@ -121,6 +121,8 @@ jobs:
           permission-issues: write
           permission-checks: read # gh pr list --json statusCheckRollup reads check runs
           permission-statuses: read # ... and commit statuses; without these `gh pr list` can fail
+          permission-contents: read # ... and the commit the rollup hangs off
+          permission-actions: read # ... and each check's workflowRun; without these the query fails with "Resource not accessible by integration"
 
       - name: Mark labelled green drafts ready
         env:
