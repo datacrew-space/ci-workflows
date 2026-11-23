@@ -10,6 +10,8 @@ agent, status report). `README.md` explains usage; the header of
 - `scripts/` guard, scanner and report scripts. Callers pin and run these at a commit SHA.
 - `tests/` pytest and shell tests for the scripts and the workflow structure.
 - `examples/` caller workflow and CI agent prompt templates. `agents/` on-demand reviewer agent.
+- `skills/` agent skills. `skills/configure-repo-ci/` sets up or audits a repository's CI, CD and
+  branch configuration with this repository's conventions.
 
 ## Commands
 
