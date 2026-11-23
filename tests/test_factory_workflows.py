@@ -314,11 +314,13 @@ def test_the_dispatcher_labels_the_draft_it_opened(jobs):
     # last line it printed may reach $GITHUB_OUTPUT.
     assert '"${draft_flag[@]}")\n' in push_run
     assert "pr_url=\"${pr_url##*$'\\n'}\"" in push_run
+    # A create that printed no URL would skip the label step and leave a draft nothing picks up.
+    assert 'if [ -z "$pr_url" ]; then' in push_run
     label = step(jobs["publish"], "label")
     # Only a draft, only when a PR was opened, and an empty label turns the step off.
-    assert "steps.push.outputs.pr-url != ''" in label["if"]
-    assert "inputs.draft" in label["if"]
-    assert "inputs.ready-for-review-label != ''" in label["if"]
+    assert label["if"] == (
+        "${{ steps.push.outputs.pr-url != '' && inputs.draft && inputs.ready-for-review-label != '' }}"
+    )
     # The app token, so the `labeled` event starts ready-when-green (GITHUB_TOKEN events start nothing).
     assert label["env"]["GH_TOKEN"] == "${{ steps.push-token.outputs.token }}"
     assert label["env"]["READY_FOR_REVIEW_LABEL"] == "${{ inputs.ready-for-review-label }}"
@@ -534,6 +536,7 @@ def test_a_failed_labelling_is_visible_and_says_what_to_do(tmp_path):
     assert len(calls) == 1
     assert "::error::" in out
     assert "ready-for-review" in out
+    assert "do not re-run" in out  # a re-run pushes a new branch and opens a second PR
 
 
 @pytest.mark.parametrize(

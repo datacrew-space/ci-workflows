@@ -239,8 +239,8 @@ jobs:
         run: |
           gh label create "$CLAIMED_LABEL" --repo "$REPO" --color 5319E7 \
             --description "The dispatcher started an agent on this issue" > /dev/null 2>&1 || true
-          # The publish job adds this label to the PR it opens, with a token that has no issues: write,
-          # so the label is made here, where the default token may create one.
+          # The publish job adds this label to the PR it opens. It is made here so that it exists, with
+          # a colour and a description, before any PR does, and so that publish only ever adds it.
           if [ -n "$READY_FOR_REVIEW_LABEL" ]; then
             gh label create "$READY_FOR_REVIEW_LABEL" --repo "$REPO" --color 0E8A16 \
               --description "The author has finished; mark this draft ready once CI is green" > /dev/null 2>&1 || true
@@ -592,6 +592,10 @@ jobs:
           pr_url=$(GH_TOKEN="$PUSH_TOKEN" gh pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$branch" \
             --title "$title" --body-file "$body" "${draft_flag[@]}")
           pr_url="${pr_url##*$'\n'}"
+          if [ -z "$pr_url" ]; then
+            echo "::error::the PR was opened from $branch but gh printed no URL, so it was not labelled; label it by hand and do not re-run this job (a re-run opens a second PR)"
+            exit 1
+          fi
           echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
           echo "pushed $count commit(s) to $branch and opened a PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
 
@@ -614,13 +618,13 @@ jobs:
           number="${PR_URL##*/}"
           case "$number" in
             '' | *[!0-9]*)
-              echo "::error::could not read a PR number from the URL the push step reported; add the ${READY_FOR_REVIEW_LABEL} label to the new PR by hand"
+              echo "::error::could not read a PR number from the URL the push step reported; add the ${READY_FOR_REVIEW_LABEL} label to the new PR by hand and do not re-run this job (a re-run opens a second PR)"
               exit 1
               ;;
           esac
           if ! gh api --method POST "repos/$REPO/issues/$number/labels" -f "labels[]=$READY_FOR_REVIEW_LABEL" > /dev/null; then
-            echo "::error::PR #$number is open but could not be labelled ${READY_FOR_REVIEW_LABEL}; add the label by hand"
-            echo "PR #$number is open but NOT labelled ${READY_FOR_REVIEW_LABEL}; add the label by hand" >> "$GITHUB_STEP_SUMMARY"
+            echo "::error::PR #$number is open but could not be labelled ${READY_FOR_REVIEW_LABEL}; add the label by hand and do not re-run this job (a re-run opens a second PR)"
+            echo "PR #$number is open but NOT labelled ${READY_FOR_REVIEW_LABEL}. Add the label by hand. Do not re-run this job: a re-run opens a second PR." >> "$GITHUB_STEP_SUMMARY"
             exit 1
           fi
           echo "labelled #$number ${READY_FOR_REVIEW_LABEL}" >> "$GITHUB_STEP_SUMMARY"

@@ -119,11 +119,13 @@ Set `draft: false` only if nothing in your repository merges on green CI alone.
 **The finished label.** The agent has finished before the PR is opened, so the dispatcher adds
 `ready-for-review-label` (default `ready-for-review`) to the draft itself. With `ready-when-green` enabled,
 the chain then needs nobody: PR opened, CI green, marked ready, review loop starts. Keep the name equal to
-`ready-when-green`'s `ready-label`. The label alone does nothing in a repository that does not run
+`ready-when-green`'s `ready-label` and to the label named in the `if:` of your `ready-when-green` caller.
+The label alone does nothing in a repository that does not run
 `ready-when-green`. Set `ready-for-review-label: ""` where automation merges any non-draft PR on green CI
 alone and `ready-when-green` is enabled: there a labelled draft would become ready, and so merge, before
 any review is recorded. No label is added when `draft` is `false`. If the label cannot be added, the PR
-stays open and the job fails with the PR number, so the miss is visible.
+stays open and the job fails with the PR number, so the miss is visible. Add the label by hand then;
+do not re-run the job, because a re-run pushes a new branch and opens a second PR.
 
 **Concurrency.** Select-and-claim is serialised inside the workflow (one group per repository), so two
 overlapping runs cannot claim the same issue. The example caller's own `concurrency` block uses a different
@@ -181,6 +183,10 @@ store `READY_APP_ID` and `READY_APP_PRIVATE_KEY`. Copy
 [`examples/ready-when-green-caller.yml`](examples/ready-when-green-caller.yml), set the CI workflow name
 it listens to, pin the SHA, and set `READY_WHEN_GREEN_ENABLED=true`. Your CI must publish a check called
 `ci-ok` (or set `ci-check`): one required job that depends on all the others.
+
+If this repository also runs the issue dispatcher and merges any non-draft PR on green CI alone, set the
+dispatcher's `ready-for-review-label: ""` **before** you enable this workflow. The dispatcher labels every
+PR it opens, so here each one would be marked ready, and so merged, before a review is recorded.
 
 **Inputs.** `runs-on`, `tooling-ref`, `ready-label` (default `ready-for-review`), `ci-check`
 (default `ci-ok`), `secret-source` and the Infisical coordinates.
