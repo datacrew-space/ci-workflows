@@ -36,11 +36,11 @@ INFISICAL_REPO = "Infisical/secrets-action"
 INFISICAL_TAG = "v1.0.18"
 INFISICAL_SHA = "d2e351f16c6ca20d17c85e6c992e04bdeb64e87d"
 INFISICAL_FIRST_TAG_WITH_SECRET_NAME = (1, 0, 17)
-# anthropics/claude-code-action v1.0.286. Renovate bumps the workflows; update these two lines only after reading
+# anthropics/claude-code-action v1.0.289. Renovate bumps the workflows; update these two lines only after reading
 # the action's changes since the old pin (this test is the gate that makes someone look).
 CLAUDE_ACTION_REPO = "anthropics/claude-code-action"
-CLAUDE_ACTION_TAG = "v1.0.286"
-CLAUDE_ACTION_SHA = "acfe7992852970efb4fee683d63d628e3e52df67"
+CLAUDE_ACTION_TAG = "v1.0.289"
+CLAUDE_ACTION_SHA = "eb56b6666facdbd501035f4a0269d8caee2e7a8b"
 
 
 @pytest.fixture(scope="module")
@@ -107,6 +107,19 @@ def test_no_infisical_step_is_unfiltered(jobs):
 def test_claude_code_action_is_pinned_by_sha(jobs):
     for job, step_id in AGENTS:
         assert step(jobs[job], step_id)["uses"] == f"{CLAUDE_ACTION_REPO}@{CLAUDE_ACTION_SHA}"
+
+
+def test_every_claude_code_action_use_is_the_pin():
+    """Scan every workflow, so a partial bump or a hand edit outside the review loop fails (#53)."""
+    workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    uses = {}
+    for path in sorted(workflows.glob("*.y*ml")):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            m = re.search(rf"uses:\s*({re.escape(CLAUDE_ACTION_REPO)}@\S+)", line)
+            if m:
+                uses[f"{path.name}:{n}"] = m.group(1)
+    assert len(uses) >= 3, uses
+    assert set(uses.values()) == {f"{CLAUDE_ACTION_REPO}@{CLAUDE_ACTION_SHA}"}, uses
 
 
 @pytest.mark.skipif(os.environ.get("REVIEW_LOOP_VERIFY_PINS") != "1", reason="needs network and gh")
