@@ -1,11 +1,11 @@
 {
-  "env": { "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "150k" },
+  "env": { "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "250k" },
   "hooks": {
     "PreCompact": [
-      { "hooks": [ { "type": "command", "shell": "bash", "command": "cat ~/.claude/hooks/compact-instructions.md" } ] }
+      { "hooks": [ { "type": "command", "shell": "bash", "command": "cat \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/compact-instructions.md\"" } ] }
     ],
     "SessionStart": [
-      { "matcher": "compact", "hooks": [ { "type": "command", "shell": "bash", "command": "cat ~/.claude/hooks/after-compact.md" } ] }
+      { "matcher": "compact", "hooks": [ { "type": "command", "shell": "bash", "command": "cat \"${CLAUDE_CONFIG_DIR:-$HOME/.claude}/hooks/after-compact.md\"" } ] }
     ]
   }
 }

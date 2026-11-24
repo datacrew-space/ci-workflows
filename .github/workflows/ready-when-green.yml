@@ -76,7 +76,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout the script (this tooling repository, not the caller)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: datacrew-space/ci-workflows
           ref: ${{ inputs.tooling-ref }}
@@ -112,7 +112,7 @@ jobs:
 
       - name: Mint the token (mark ready, remove label)
         id: token
-        uses: actions/create-github-app-token@v2.2.2
+        uses: actions/create-github-app-token@v3.4.0
         with:
           app-id: ${{ secrets.READY_APP_ID || env.READY_APP_ID }}
           private-key: ${{ secrets.READY_APP_PRIVATE_KEY || env.READY_APP_PRIVATE_KEY }}

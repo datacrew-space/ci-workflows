@@ -52,7 +52,7 @@ def test_private_terms_secret_is_optional():
 
 def test_checkout_is_full_depth_without_credentials():
     first = steps(GUARDS)[0]
-    assert first["uses"] == "actions/checkout@v4"
+    assert first["uses"] == "actions/checkout@v7"
     assert first["with"] == {"fetch-depth": 0, "persist-credentials": False}
 
 

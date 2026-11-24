@@ -188,7 +188,7 @@ jobs:
           fi
           echo "act=$act" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         if: ${{ steps.act.outputs.act == 'true' }}
 
       - uses: letta-ai/letta-code-action@b50e45b91c77d5a7b8a64f4088bedcd8c442bd13 # v0.0.6

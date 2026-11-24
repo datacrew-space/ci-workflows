@@ -207,7 +207,7 @@ jobs:
       issues: write
     steps:
       - name: Checkout the decision scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: datacrew-space/ci-workflows
           ref: ${{ inputs.tooling-ref }}
@@ -293,7 +293,7 @@ jobs:
       # The default branch tip at dispatch time. No stored credentials in .git/config: this job
       # never pushes.
       - name: Checkout the default branch
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
           persist-credentials: false
@@ -457,7 +457,7 @@ jobs:
       # The decisions about untrusted agent output are scripts from THIS tooling repository at a pinned
       # ref, never from the agent's bundle or the repository under work.
       - name: Checkout the decision scripts
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: datacrew-space/ci-workflows
           ref: ${{ inputs.tooling-ref }}
@@ -505,7 +505,7 @@ jobs:
       - name: Mint the implementer push token
         id: push-token
         if: ${{ steps.download.outcome == 'success' }}
-        uses: actions/create-github-app-token@v2.2.2
+        uses: actions/create-github-app-token@v3.4.0
         with:
           app-id: ${{ secrets.IMPLEMENTER_APP_ID || env.IMPLEMENTER_APP_ID }}
           private-key: ${{ secrets.IMPLEMENTER_APP_PRIVATE_KEY || env.IMPLEMENTER_APP_PRIVATE_KEY }}
