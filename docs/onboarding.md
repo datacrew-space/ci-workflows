@@ -46,6 +46,9 @@ the App behind `READY_APP_ID`. The onboarding script prints the review loop's li
 three by hand. If you would rather not give the orchestrator Contents write, point `READY_APP_ID` at
 `ci-review-responder`, which already has every scope `ready-when-green` asks for.
 
+Whichever App is behind `READY_APP_ID`, unless it is the responder, add its slug to `allowed-bots` in the
+review caller. It is the actor when a PR is marked ready, and the review refuses a bot it was not told about.
+
 | App | Repository permissions |
 |-----|------------------------|
 | `ci-code-reviewer` | Contents: read. Pull requests: read and write. Issues: read. Checks: read. Actions: read. Commit statuses: read |
