@@ -8,8 +8,9 @@ See [Factory pieces](#factory-pieces) for the rest.
 Also here: the public-repo **guards** ([docs/guards.md](docs/guards.md)), **Python CI for uv
 projects**, a reusable lint and test workflow plus base pre-commit and ruff configs
 ([docs/python-ci.md](docs/python-ci.md), scaffold in [`examples/python-uv-repo/`](examples/python-uv-repo)),
-and **infra-promote**, which promotes a green commit to a `deploy` branch
-([docs/infra-deploy.md](docs/infra-deploy.md)).
+**infra-promote**, which promotes a green commit to a `deploy` branch
+([docs/infra-deploy.md](docs/infra-deploy.md)), and **lib-release**, semantic-version releases for
+libraries, packages and apps ([docs/library-release.md](docs/library-release.md)).
 
 A pull request gets an independent review from a reviewer agent. If the reviewer asks for changes,
 a responder agent may push small fixes to the PR branch, and the PR is reviewed once more. The loop
