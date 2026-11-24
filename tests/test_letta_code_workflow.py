@@ -389,7 +389,7 @@ def test_the_job_is_exactly_decide_checkout_agent(job):
     assert decide_step["id"] == "act"
     assert decide_step["shell"] == "bash"
     assert set(decide_step) == {"name", "id", "shell", "env", "run"}
-    assert checkout == {"uses": "actions/checkout@v4", "if": WAITS}, (
+    assert checkout == {"uses": "actions/checkout@v7", "if": WAITS}, (
         "no `ref`: the event's default ref only. On a review event that is the pull request's merge ref,"
         " and the fork refusal keeps that to this repository's own branches"
     )
