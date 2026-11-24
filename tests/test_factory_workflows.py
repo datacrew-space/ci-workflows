@@ -651,11 +651,16 @@ def test_the_prompt_names_the_exact_commit_commands_the_tool_list_admits(workflo
     The tool list admits `git add -- <paths>` and `git commit -m <message>` and nothing else, so two
     finished tickets (47 and 43 passing tests) were thrown away with the runner.
     """
+    text = (WF / workflow).read_text(encoding="utf-8")
+    assert "Bash(git add -- *),Bash(git commit -m *)" in text  # the two rules the prompt describes
     prompt = step(load(WF / workflow)["jobs"][job_name], step_id)["with"]["prompt"]
     flat = " ".join(prompt.split())
     assert "git add / git commit" not in flat
     assert "`git add -- <paths>`" in flat
-    assert '`git commit -m "<subject>" -m "<body>"`' in flat
-    assert "every other form is refused" in flat
-    for trap in ("`&&`", "`cd`", "heredoc", "`$(...)`"):
+    assert "other forms are refused" in flat
+    # Single quotes: a backtick or `$` inside a double-quoted message is refused as a substitution,
+    # and agents write backticks in commit bodies all the time.
+    assert "`git commit -m '<subject>' -m '<body>'`" in flat
+    assert "single quotes with no single quote inside" in flat
+    for trap in ("`cd`", "heredoc", "`$(...)`"):
         assert trap in flat, trap
