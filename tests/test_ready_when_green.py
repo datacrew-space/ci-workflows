@@ -150,7 +150,7 @@ def test_a_failing_gh_shows_what_gh_said(monkeypatch, capsys):
     assert "more" not in err  # only gh's first line
 
 
-def test_the_workflow_token_can_read_checks_and_statuses():
+def test_the_workflow_token_has_the_scopes_marking_a_pr_ready_needs():
     import yaml
 
     path = Path(__file__).resolve().parent.parent / ".github" / "workflows" / "ready-when-green.yml"

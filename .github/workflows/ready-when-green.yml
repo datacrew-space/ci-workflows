@@ -13,8 +13,9 @@ name: Ready when green (reusable)
 #   - a PR became ready      (pull_request_target: ready_for_review), which lets a stack cascade
 #
 # Why an app token: a PR marked ready with GITHUB_TOKEN starts no workflow, so the review would never
-# run. The app needs pull requests write and issues write (to remove the label), plus checks read and
-# statuses read (`gh pr list --json statusCheckRollup`).
+# run. The app needs pull requests write and contents write (GitHub refuses to mark a draft ready
+# without both), issues write (to remove the label), and checks, statuses and actions read
+# (`gh pr list --json statusCheckRollup`). The mint step below is the exact list.
 # Security: pull_request_target and workflow_run run the CALLER file from the default branch, and this
 # job checks out only this tooling repository at `tooling-ref`. PR code is never checked out, and no
 # event text reaches a shell command. The token is minted after that checkout.

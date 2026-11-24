@@ -191,7 +191,8 @@ the `ci-ok` check is green on its head, the PR is marked ready (which starts the
 label is removed. A stacked PR waits while the PR it is based on is still a draft. No label, no flip.
 
 **Setup.** Make a GitHub App (pull requests write, contents write, issues write, checks read, statuses read,
-actions read; it can be the same app as another) and
+actions read; it can be the same app as another: `ci-review-responder` already has all of these, while
+`ci-review-orchestrator` needs Contents write, Checks read and Actions read added) and
 store `READY_APP_ID` and `READY_APP_PRIVATE_KEY`. Copy
 [`examples/ready-when-green-caller.yml`](examples/ready-when-green-caller.yml), set the CI workflow name
 it listens to, pin the SHA, and set `READY_WHEN_GREEN_ENABLED=true`. Your CI must publish a check called
