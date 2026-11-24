@@ -632,8 +632,13 @@ jobs:
             workflow step pushes your commits); do NOT wait for CI; do NOT add labels or edit the PR.
             Work every finding from the latest review on ${{ github.repository }}/pull/${{ github.event.pull_request.number }}.
             The base branch is origin/${{ inputs.base-branch }}.
-            Fix real small findings in separate commits with git add / git commit; open a follow-up issue for large
-            ones; decline with a reason. You may change only source, test and documentation files (never a script, Dockerfile, compose
+            Fix real small findings in separate commits; open a follow-up issue for large
+            ones; decline with a reason.
+            Commit with these two commands and no other form, because other forms are refused:
+            `git add -- <paths>` (the `--` is required), then `git commit -m '<subject>' -m '<body>'`. Put each
+            message in single quotes with no single quote inside it: a backtick or `$` inside double quotes is
+            refused. Do not put `cd` in front, and do not build the message with a heredoc or `$(...)`.
+            You may change only source, test and documentation files (never a script, Dockerfile, compose
             file, config, unit, AGENTS.md, dependency manifest or workflow; the rule is the protected-paths
             guard): the whole push is refused if any
             commit touches anything else. A
