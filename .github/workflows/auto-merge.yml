@@ -50,7 +50,7 @@ jobs:
       cancel-in-progress: false
     steps:
       - name: Checkout the script (this tooling repository, not the caller)
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           repository: datacrew-space/ci-workflows
           ref: ${{ inputs.tooling-ref }}
