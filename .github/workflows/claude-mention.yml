@@ -1,0 +1,200 @@
+name: Claude mention (reusable)
+
+# A reusable workflow for the `@claude` mention responder. It lets someone summon Claude by writing the
+# trigger phrase (default `@claude`) in an issue comment, a pull request comment, a pull request review
+# comment, the summary of a pull request review, or the title or body of an issue. Claude answers in
+# the thread, and it can read the repository and the CI results.
+#
+# The caller owns the triggers, the permissions and the opt-in. See examples/claude-mention-caller.yml.
+# The caller passes the runner label and where its secret store keeps the Claude Code OAuth token.
+#
+# One step decides whether an event may summon Claude ("Decide whether Claude may act"), and the
+# remaining steps run only when it says yes. It refuses, with a green run and a reason in the log:
+#   - an event that does not contain the phrase, and an empty phrase, which every text contains;
+#   - a run with no secret-store settings or credentials, so a repository can adopt the caller before
+#     it has set them up;
+#   - an actor that is a bot;
+#   - an author whose association with the repository is not in `allowed-associations` (default:
+#     owner, member, collaborator). The author is the one who wrote the comment, the review or the
+#     issue, as GitHub reports it in the event.
+# The decision is tested by running it (tests/test_claude_mention_workflow.py). The action applies its
+# own checks on top (the actor needs write access to the repository).
+#
+# The phrase test (`contains()`: any letter case, anywhere in the text) is looser than the action's, so
+# a mention in some other letter case passes this step and the action then does nothing.
+#
+# No fork refusal here, unlike letta-code.yml. The action restores its own configuration from the
+# base branch, not from the pull request, `restrict_untrusted_prs` limits its tools for authors without
+# write access, and only the allowed associations can summon it. What is left is prompt injection from
+# the content of a fork's pull request. The action runs on fork pull requests (its `allow_fork_prs` defaults to true) and this workflow has no
+# input to change that.
+#
+# Security: the job holds the Claude Code OAuth token once Claude is summoned, and reads issue, pull
+# request and comment text that anyone may have written. No secret and no event text is written into a
+# shell script or placed in its environment: the decision step gets true/false answers, the author
+# association and the actor's login. The caller must never use `pull_request_target`. The job's token
+# is read-only, and the actions are pinned by commit SHA.
+#
+# Secrets: INFISICAL_CLIENT_ID and INFISICAL_CLIENT_SECRET (a machine identity that can read one
+# secret, CLAUDE_CODE_OAUTH_TOKEN, under `infisical-claude-path`).
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        description: JSON for runs-on of the job
+        type: string
+        default: '"ubuntu-latest"'
+      infisical-domain:
+        description: Base URL of the Infisical instance that holds the token. Empty means the job reports and skips Claude.
+        type: string
+        default: ""
+      infisical-project-slug:
+        description: Infisical project slug. Empty means the job reports and skips Claude.
+        type: string
+        default: ""
+      infisical-env-slug:
+        type: string
+        default: prod
+      infisical-claude-path:
+        description: Infisical folder holding CLAUDE_CODE_OAUTH_TOKEN
+        type: string
+        default: /claude
+      trigger-phrase:
+        description: Phrase that summons Claude. Empty switches every trigger off.
+        type: string
+        default: "@claude"
+      allowed-associations:
+        description: >-
+          Comma-separated author associations that may summon Claude: any of OWNER, MEMBER,
+          COLLABORATOR, CONTRIBUTOR, FIRST_TIME_CONTRIBUTOR, FIRST_TIMER, NONE. Do not add the last
+          four on a public repository.
+        type: string
+        default: "OWNER,MEMBER,COLLABORATOR"
+    secrets:
+      INFISICAL_CLIENT_ID:
+        required: false
+      INFISICAL_CLIENT_SECRET:
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  claude:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+      actions: read # lets Claude read CI results on pull requests
+    steps:
+      - name: Decide whether Claude may act
+        id: act
+        shell: bash
+        env:
+          ACTOR: ${{ github.actor }}
+          HAS_CREDENTIALS: ${{ secrets.INFISICAL_CLIENT_ID != '' && secrets.INFISICAL_CLIENT_SECRET != '' }}
+          HAS_STORE: ${{ inputs.infisical-domain != '' && inputs.infisical-project-slug != '' }}
+          HAS_PHRASE_INPUT: ${{ inputs.trigger-phrase != '' }}
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_ACTION: ${{ github.event.action }}
+          COMMENT_HAS_PHRASE: ${{ contains(github.event.comment.body, inputs.trigger-phrase) }}
+          REVIEW_HAS_PHRASE: ${{ contains(github.event.review.body, inputs.trigger-phrase) }}
+          ISSUE_HAS_PHRASE: ${{ contains(github.event.issue.title, inputs.trigger-phrase) || contains(github.event.issue.body, inputs.trigger-phrase) }}
+          COMMENT_ASSOCIATION: ${{ github.event.comment.author_association }}
+          REVIEW_ASSOCIATION: ${{ github.event.review.author_association }}
+          ISSUE_ASSOCIATION: ${{ github.event.issue.author_association }}
+          ALLOWED_ASSOCIATIONS: ${{ inputs.allowed-associations }}
+        run: |
+          # 1. Does this event ask for Claude at all, and who wrote the text that asks?
+          asked=false
+          association=""
+          why="$EVENT_NAME/$EVENT_ACTION never summons Claude"
+          case "$EVENT_NAME/$EVENT_ACTION" in
+            issue_comment/created|pull_request_review_comment/created)
+              asked="$COMMENT_HAS_PHRASE"
+              association="$COMMENT_ASSOCIATION"
+              why="the comment does not contain the trigger phrase"
+              ;;
+            pull_request_review/submitted)
+              asked="$REVIEW_HAS_PHRASE"
+              association="$REVIEW_ASSOCIATION"
+              why="the review does not contain the trigger phrase"
+              ;;
+            issues/opened|issues/assigned)
+              asked="$ISSUE_HAS_PHRASE"
+              association="$ISSUE_ASSOCIATION"
+              why="the issue does not contain the trigger phrase"
+              ;;
+          esac
+          if [ "$asked" = "true" ] && [ "$HAS_PHRASE_INPUT" != "true" ]; then
+            asked=false
+            why="the trigger phrase is empty, which would match every comment"
+          fi
+
+          # 2. May the request be answered?
+          act=false
+          if [ "$asked" = "true" ]; then
+            if [ "$HAS_CREDENTIALS" != "true" ] || [ "$HAS_STORE" != "true" ]; then
+              why="the secret store settings or credentials are missing"
+            elif [[ "$ACTOR" == *"[bot]" ]]; then
+              why="$ACTOR is a bot"
+            else
+              # The list is split into whole words and compared exactly, so an empty association
+              # (an event with none) never matches.
+              allowed=false
+              IFS=',' read -r -a wanted <<< "$ALLOWED_ASSOCIATIONS"
+              for item in "${wanted[@]}"; do
+                item="${item//[[:space:]]/}"
+                if [ -n "$item" ] && [ "$item" = "$association" ]; then
+                  allowed=true
+                fi
+              done
+              if [ "$allowed" = "true" ]; then
+                act=true
+              else
+                why="the author's association (${association:-none}) is not in the allowed set"
+              fi
+            fi
+          fi
+
+          if [ "$act" = "true" ]; then
+            echo "Calling Claude."
+          else
+            echo "Not calling Claude: $why."
+          fi
+          echo "act=$act" >> "$GITHUB_OUTPUT"
+
+      # The action fetches with the checkout's stored credential, then replaces it with its own token, so
+      # do not set `persist-credentials: false` here.
+      - name: Checkout repository
+        if: ${{ steps.act.outputs.act == 'true' }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 1
+
+      - name: Fetch the Claude Code OAuth token
+        if: ${{ steps.act.outputs.act == 'true' }}
+        uses: Infisical/secrets-action@d2e351f16c6ca20d17c85e6c992e04bdeb64e87d # v1.0.18
+        with:
+          method: "universal"
+          client-id: ${{ secrets.INFISICAL_CLIENT_ID }}
+          client-secret: ${{ secrets.INFISICAL_CLIENT_SECRET }}
+          domain: ${{ inputs.infisical-domain }}
+          project-slug: ${{ inputs.infisical-project-slug }}
+          env-slug: ${{ inputs.infisical-env-slug }}
+          secret-path: ${{ inputs.infisical-claude-path }}
+          secret-name: "CLAUDE_CODE_OAUTH_TOKEN"
+
+      - name: Run Claude Code
+        if: ${{ steps.act.outputs.act == 'true' }}
+        uses: anthropics/claude-code-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
+        with:
+          claude_code_oauth_token: ${{ env.CLAUDE_CODE_OAUTH_TOKEN }}
+          trigger_phrase: ${{ inputs.trigger-phrase }}
+          # lets Claude read CI results on pull requests
+          additional_permissions: |
+            actions: read

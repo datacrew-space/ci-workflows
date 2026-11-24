@@ -42,9 +42,9 @@ other permission at *No access*, turn the webhook off, and install on the target
 
 | App | Repository permissions |
 |-----|------------------------|
-| `ci-code-reviewer` | Contents: read. Pull requests: read and write. Checks: read. Actions: read. Commit statuses: read |
+| `ci-code-reviewer` | Contents: read. Pull requests: read and write. Issues: read. Checks: read. Actions: read. Commit statuses: read |
 | `ci-review-responder` | Contents: read and write. Pull requests: read and write. Issues: read and write. Checks: read. Actions: read. Commit statuses: read |
-| `ci-review-orchestrator` | Commit statuses: read and write. Pull requests: read and write. Issues: read and write |
+| `ci-review-orchestrator` | Commit statuses: read and write. Pull requests: read and write. Issues: read and write. Checks: read. Contents: read. Actions: read (`ready-when-green` reads each PR's check rollup; without them the token mints but `gh pr list --json statusCheckRollup` fails) |
 
 Only the responder's name matters to the workflow: it matches that bot login (and uses the bot's
 numeric user id as the commit author). Both are caller inputs, `responder-bot-login` and
@@ -63,6 +63,42 @@ Folder `infisical-claude-path` (default `/claude`): `CLAUDE_CODE_OAUTH_TOKEN` (f
 
 The wizard never sees these values; you paste them into Infisical. Delete the downloaded `.pem` files
 afterwards.
+
+## Batch mode
+
+To adopt the loop in several repositories that share the same Apps and secret folders, write one
+answers file and give the script the checkouts:
+
+```bash
+bash scripts/onboard-review-loop.sh --batch answers.env [--overwrite] ~/src/repo-a ~/src/repo-b
+```
+
+`answers.env` holds `KEY=VALUE` lines (blank lines and `#` comments are fine):
+
+```
+INFISICAL_DOMAIN=https://your-infisical-host
+INFISICAL_PROJECT_SLUG=your-project-slug
+COMMIT_SHA=<40 hex characters of a ci-workflows commit>
+# optional, with the wizard's defaults
+INFISICAL_ENV_SLUG=prod
+INFISICAL_CLAUDE_PATH=/claude
+INFISICAL_GITHUB_PATH=/github
+RESPONDER_LOGIN=ci-review-responder
+RESPONDER_ID=
+```
+
+For each checkout it writes the caller workflow and the two agent prompts, the same files stage 6 writes.
+Then run the interactive wizard once per repository for its secrets and the enable variable, or set them
+yourself.
+
+- It checks every answer and every path before it writes anything, so a typo leaves nothing behind.
+- It never overwrites a file that exists. It leaves it, says so, and exits with status 1 so a script
+  notices. Pass `--overwrite` to replace existing files, which is the explicit yes.
+- It handles no secret. The answers file refuses any key outside the list above, without printing the
+  line, so a secret pasted into it is not read or shown.
+- It makes no `gh` call except a read-only lookup of the responder bot id, when `RESPONDER_LOGIN` is not
+  the default and `RESPONDER_ID` is empty. It sets no secret or variable, and it records nothing in any
+  checkout's history and sends nothing to a remote.
 
 ## What it deliberately does not do
 
@@ -89,4 +125,5 @@ secret names, folder defaults, variable name, App permission lists or caller pla
 them, if the variable is not set after the secrets, or if a secret value is echoed or traced.
 `tests/test_onboard_wizard_flow.py` runs the wizard against a stub `gh` and fails if a secret reaches a
 command line, an existing secret is overwritten without a yes, a re-run loses an answer, or the loop
-is enabled after a secret failed.
+is enabled after a secret failed. It runs batch mode the same way and fails if a file is overwritten
+without `--overwrite`, a secret in the answers file is shown, or batch mode sets anything on GitHub.

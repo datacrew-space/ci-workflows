@@ -228,7 +228,7 @@ VARIABLE_NAME="CLAUDE_REVIEW_ENABLED"
 # the App's own grant, so each list is the union over the tokens the workflow mints with that App.
 app_perms() {
   case "$1" in
-    ci-code-reviewer)        echo "contents:read pull-requests:write checks:read actions:read statuses:read" ;;
+    ci-code-reviewer)        echo "contents:read pull-requests:write issues:read checks:read actions:read statuses:read" ;;
     ci-review-responder)     echo "contents:write pull-requests:write issues:write checks:read actions:read statuses:read" ;;
     ci-review-orchestrator)  echo "statuses:write pull-requests:write issues:write" ;;
     *) return 1 ;;
@@ -321,6 +321,153 @@ secret_exists() {
   names="$(gh secret list --json name --jq '.[].name' 2>/dev/null)" || return 0
   grep -Fxq "$1" <<<"$names"
 }
+
+# render_caller prints examples/caller.yml filled from the answers. The wizard and batch mode share it.
+# Plain parameter expansion, not sed: the answers are validated before this runs and need no escaping.
+shopt -u patsub_replacement 2>/dev/null || true
+render_caller() {
+  local _caller _slug_block
+  _caller="$(<"$EXAMPLES_DIR/caller.yml")"
+  _slug_block="$INFISICAL_PROJECT_SLUG"
+  [[ "$INFISICAL_ENV_SLUG" != prod ]] && _slug_block+=$'\n      infisical-env-slug: '"$INFISICAL_ENV_SLUG"
+  [[ "$INFISICAL_CLAUDE_PATH" != /claude ]] && _slug_block+=$'\n      infisical-claude-path: '"$INFISICAL_CLAUDE_PATH"
+  [[ "$INFISICAL_GITHUB_PATH" != /github ]] && _slug_block+=$'\n      infisical-github-path: '"$INFISICAL_GITHUB_PATH"
+  if [[ "$RESPONDER_LOGIN" != "$DEFAULT_RESPONDER_LOGIN" ]]; then
+    _slug_block+=$'\n      responder-bot-login: '"$RESPONDER_LOGIN"
+    _slug_block+=$'\n      responder-bot-id: "'"$RESPONDER_ID"'"'
+    # the example's concurrency group names the default responder; follow the input
+    _caller="${_caller//"$DEFAULT_RESPONDER_LOGIN[bot]"/$RESPONDER_LOGIN[bot]}"
+  fi
+  _caller="${_caller//"$PH_SHA"/$COMMIT_SHA}"
+  _caller="${_caller//"$PH_DOMAIN"/$INFISICAL_DOMAIN}"
+  _caller="${_caller//"$PH_SLUG"/$_slug_block}"
+  printf '%s' "$_caller"
+}
+
+# ── batch mode ───────────────────────────────────────────────────────────
+# onboard-review-loop.sh --batch ANSWERS_FILE [--overwrite] CHECKOUT...
+# Writes the caller and the two agent prompts into each checkout from one answers file, without the
+# wizard's questions. It handles no secret at all, so the repository secrets and the enable variable
+# stay with the interactive wizard. It never touches a remote and never records anything in a
+# checkout's history: you review the files and open the PR yourself.
+BATCH_USAGE="usage: $(basename "$0") [--batch ANSWERS_FILE [--overwrite] CHECKOUT...]"
+
+# Answers a batch file may carry. Anything else is refused, so a secret pasted into the file is
+# never kept or printed.
+BATCH_KEYS=" INFISICAL_DOMAIN INFISICAL_PROJECT_SLUG INFISICAL_ENV_SLUG INFISICAL_CLAUDE_PATH INFISICAL_GITHUB_PATH RESPONDER_LOGIN RESPONDER_ID COMMIT_SHA "
+
+batch_die() { warn "$1"; exit 1; }
+
+# batch_check KEY VALUE REGEX HINT: stop when an answer is malformed.
+batch_check() {
+  [[ "$2" =~ $3 ]] || batch_die "answer $1 is not valid. Expected: $4"
+}
+
+# batch_read ANSWERS_FILE: load KEY=VALUE lines (blank lines and # comments allowed) and validate them.
+batch_read() {
+  local file="$1" line key value n=0
+  [[ -f "$file" ]] || batch_die "answers file not found: $file"
+  # An answer missing from the file must be missing, not whatever the environment happens to hold.
+  # shellcheck disable=SC2086
+  unset $BATCH_KEYS
+  while IFS= read -r line || [[ -n "$line" ]]; do
+    n=$((n + 1))
+    line="${line%$'\r'}"
+    (( n == 1 )) && line="${line#$'\xef\xbb\xbf'}"  # a UTF-8 byte order mark from a Windows editor
+    [[ -z "${line//[[:space:]]/}" || "$line" =~ ^[[:space:]]*# ]] && continue
+    [[ "$line" =~ ^([A-Z_]+)=(.*)$ ]] || batch_die "answers file line $n is not KEY=VALUE (its content is not shown)."
+    key="${BASH_REMATCH[1]}"; value="${BASH_REMATCH[2]}"
+    [[ "$BATCH_KEYS" == *" $key "* ]] || batch_die "answers file line $n is not an allowed answer (its content is not shown). This mode takes no secrets; allowed keys:${BATCH_KEYS% }."
+    printf -v "$key" '%s' "$value"
+  done < "$file"
+  [[ -n "${INFISICAL_DOMAIN:-}" ]] || batch_die "answers file needs INFISICAL_DOMAIN."
+  [[ -n "${INFISICAL_PROJECT_SLUG:-}" ]] || batch_die "answers file needs INFISICAL_PROJECT_SLUG."
+  [[ -n "${COMMIT_SHA:-}" ]] || batch_die "answers file needs COMMIT_SHA."
+  INFISICAL_ENV_SLUG="${INFISICAL_ENV_SLUG:-prod}"
+  INFISICAL_CLAUDE_PATH="${INFISICAL_CLAUDE_PATH:-/claude}"
+  INFISICAL_GITHUB_PATH="${INFISICAL_GITHUB_PATH:-/github}"
+  RESPONDER_LOGIN="${RESPONDER_LOGIN:-$DEFAULT_RESPONDER_LOGIN}"
+  batch_check INFISICAL_DOMAIN "$INFISICAL_DOMAIN" '^https://[A-Za-z0-9._:/-]+$' "an https:// URL with no spaces"
+  batch_check INFISICAL_PROJECT_SLUG "$INFISICAL_PROJECT_SLUG" '^[A-Za-z0-9._-]+$' "letters, digits, . _ -"
+  batch_check INFISICAL_ENV_SLUG "$INFISICAL_ENV_SLUG" '^[A-Za-z0-9._-]+$' "letters, digits, . _ -"
+  batch_check INFISICAL_CLAUDE_PATH "$INFISICAL_CLAUDE_PATH" '^[A-Za-z0-9._/-]+$' "a folder like /claude"
+  batch_check INFISICAL_GITHUB_PATH "$INFISICAL_GITHUB_PATH" '^[A-Za-z0-9._/-]+$' "a folder like /github"
+  batch_check RESPONDER_LOGIN "$RESPONDER_LOGIN" '^[A-Za-z0-9-]+$' "a GitHub App name like ci-review-responder"
+  batch_check COMMIT_SHA "$COMMIT_SHA" '^[0-9a-f]{40}$' "a full 40-character lowercase hex SHA"
+}
+
+# batch_put DEST SRC: copy SRC to DEST unless DEST exists and --overwrite was not given.
+batch_put() {
+  local dest="$1" src="$2"
+  if [[ -e "$dest" && -z "$BATCH_OVERWRITE" ]]; then
+    BATCH_KEPT=$((BATCH_KEPT + 1))
+    warn "$dest exists, left as it was (pass --overwrite to replace it)."
+    return 0
+  fi
+  mkdir -p "$(dirname "$dest")"
+  cp "$src" "$dest"
+  printf '  %s✓ wrote%s %s\n' "$GREEN" "$RESET" "$dest"
+}
+
+batch_main() {
+  local answers="" dir _tmp
+  local -a checkouts=()
+  BATCH_OVERWRITE=""
+  BATCH_KEPT=0
+  while (( $# )); do
+    case "$1" in
+      --overwrite) BATCH_OVERWRITE=1 ;;
+      -*) warn "unknown option: $1"; warn "$BATCH_USAGE"; exit 2 ;;
+      *) if [[ -z "$answers" ]]; then answers="$1"; else checkouts+=("$1"); fi ;;
+    esac
+    shift
+  done
+  [[ -n "$answers" && ${#checkouts[@]} -gt 0 ]] || { warn "$BATCH_USAGE"; exit 2; }
+  [[ -f "$EXAMPLES_DIR/caller.yml" ]] || batch_die "examples/caller.yml not found next to this script. Run it from a checkout of $WORKFLOW_REPO."
+
+  # Read the answers, and check every checkout, before writing anything.
+  batch_read "$answers"
+  if [[ -z "${RESPONDER_ID:-}" ]]; then
+    if [[ "$RESPONDER_LOGIN" == "$DEFAULT_RESPONDER_LOGIN" ]]; then
+      RESPONDER_ID="$DEFAULT_RESPONDER_ID"
+    elif command -v gh >/dev/null 2>&1; then
+      RESPONDER_ID="$(gh api "users/${RESPONDER_LOGIN}%5Bbot%5D" --jq .id 2>/dev/null || true)"
+    fi
+  fi
+  batch_check RESPONDER_ID "${RESPONDER_ID:-}" '^[0-9]+$' "digits only. Set RESPONDER_ID in the answers file when the bot id cannot be looked up"
+  for dir in "${checkouts[@]}"; do
+    dir="${dir/#\~/$HOME}"
+    [[ -e "$dir/.git" ]] || batch_die "$dir is not a git checkout. Nothing was written."
+  done
+
+  _tmp="$(mktemp)"
+  trap 'rm -f "$_tmp"' EXIT
+  printf '%s\n' "$(render_caller)" > "$_tmp"
+  for dir in "${checkouts[@]}"; do
+    dir="${dir/#\~/$HOME}"
+    say "$dir"
+    batch_put "$dir/.github/workflows/claude-code-review.yml" "$_tmp"
+    batch_put "$dir/.agents/agents/code-reviewer.md" "$EXAMPLES_DIR/code-reviewer.md"
+    batch_put "$dir/.agents/agents/review-responder.md" "$EXAMPLES_DIR/review-responder.md"
+  done
+  printf '\n'
+  note "Wrote files only. Nothing was sent to GitHub: no secret, no variable, no commit, no push."
+  note "In each checkout: edit the two prompts, review the caller, then open a PR. Set the repository secrets"
+  note "and the enable variable with the interactive wizard (no arguments), once per repository."
+  if (( BATCH_KEPT )); then
+    warn "$BATCH_KEPT existing file(s) were left as they were."
+    exit 1
+  fi
+  exit 0
+}
+
+if (( $# )); then
+  case "$1" in
+    --batch) shift; batch_main "$@" ;;
+    -h|--help) echo "$BATCH_USAGE"; exit 0 ;;
+    *) warn "$BATCH_USAGE"; exit 2 ;;
+  esac
+fi
 
 banner "Claude code-review loop: onboard a repository"
 
@@ -449,22 +596,7 @@ say "Pin the workflow and the tooling to one commit SHA of $WORKFLOW_REPO (a rel
 note "  git ls-remote https://github.com/$WORKFLOW_REPO refs/heads/main"
 need COMMIT_SHA "Commit SHA (40 hex characters):" '^[0-9a-f]{40}$' "a full 40-character lowercase hex SHA"
 
-# Plain parameter expansion, not sed: the answers are validated above and need no escaping.
-shopt -u patsub_replacement 2>/dev/null || true
-_caller="$(<"$EXAMPLES_DIR/caller.yml")"
-_slug_block="$INFISICAL_PROJECT_SLUG"
-[[ "$INFISICAL_ENV_SLUG" != prod ]] && _slug_block+=$'\n      infisical-env-slug: '"$INFISICAL_ENV_SLUG"
-[[ "$INFISICAL_CLAUDE_PATH" != /claude ]] && _slug_block+=$'\n      infisical-claude-path: '"$INFISICAL_CLAUDE_PATH"
-[[ "$INFISICAL_GITHUB_PATH" != /github ]] && _slug_block+=$'\n      infisical-github-path: '"$INFISICAL_GITHUB_PATH"
-if [[ "$RESPONDER_LOGIN" != "$DEFAULT_RESPONDER_LOGIN" ]]; then
-  _slug_block+=$'\n      responder-bot-login: '"$RESPONDER_LOGIN"
-  _slug_block+=$'\n      responder-bot-id: "'"$RESPONDER_ID"'"'
-  # the example's concurrency group names the default responder; follow the input
-  _caller="${_caller//"$DEFAULT_RESPONDER_LOGIN[bot]"/$RESPONDER_LOGIN[bot]}"
-fi
-_caller="${_caller//"$PH_SHA"/$COMMIT_SHA}"
-_caller="${_caller//"$PH_DOMAIN"/$INFISICAL_DOMAIN}"
-_caller="${_caller//"$PH_SLUG"/$_slug_block}"
+_caller="$(render_caller)"
 
 _dest_caller="$TARGET_DIR/.github/workflows/claude-code-review.yml"
 _dest_agents="$TARGET_DIR/.agents/agents"

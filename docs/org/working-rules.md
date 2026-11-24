@@ -7,11 +7,12 @@ request against this file. Don't fork it per agent or per repository.
 ## Public by default
 
 - Every org repository, issue, pull request and CI log is public. Write nothing private: no internal
-  hostnames, IP addresses, private repository or account names, personal emails, local paths or
-  usernames. Use placeholders.
+  hostnames, IP addresses, private repository or account names, internal tool names, personal
+  emails, local paths or usernames. Use placeholders.
 - Never weaken a guard script to make a change pass. If a guard is wrong, fix it in its own reviewed
   pull request.
-- Commit with the repository's configured noreply identity.
+- Commit with a GitHub noreply address. Repository git config is not versioned, so set it on each
+  fresh clone.
 
 ## Stop and ask
 
