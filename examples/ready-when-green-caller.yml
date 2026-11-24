@@ -4,6 +4,7 @@ name: Ready when green
 # commit SHA of datacrew-space/ci-workflows. The caller owns the triggers, and pull_request_target and
 # workflow_run run THIS file from the default branch, so a pull request cannot edit it to run its own
 # code with the token. Do not add a checkout of the pull request here.
+# Add the App's slug to `allowed-bots` in your review caller, unless it is the review loop's responder.
 
 on:
   workflow_run:

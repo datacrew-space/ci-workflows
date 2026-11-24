@@ -48,6 +48,8 @@ three by hand. If you would rather not give the orchestrator Contents write, poi
 
 Whichever App is behind `READY_APP_ID`, unless it is the responder, add its slug to `allowed-bots` in the
 review caller. It is the actor when a PR is marked ready, and the review refuses a bot it was not told about.
+If it is the responder, the review that follows counts as round 2 (the round counter reads who sent the
+event), so a first `changes-requested` goes straight to a human. Prefer a separate App and list it.
 
 | App | Repository permissions |
 |-----|------------------------|
