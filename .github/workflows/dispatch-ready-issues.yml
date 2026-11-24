@@ -430,7 +430,7 @@ jobs:
 
       - name: Hand the output to the publish job
         if: ${{ always() && steps.implement-agent.outcome == 'success' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agent-${{ matrix.issue }}
           path: ${{ runner.temp }}/out/
@@ -470,7 +470,7 @@ jobs:
       - name: Download the agent's output
         id: download
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: agent-${{ matrix.issue }}
           path: ${{ runner.temp }}/agent

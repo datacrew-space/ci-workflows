@@ -396,7 +396,7 @@ jobs:
         id: upload
         if: ${{ always() }}
         continue-on-error: true
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: code-review-pr-${{ github.event.pull_request.number }}
           path: ${{ runner.temp }}/review/
@@ -670,7 +670,7 @@ jobs:
 
       - name: Upload the bundle for the push job
         if: ${{ always() && steps.bundle.outputs.has_bundle == 'true' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: review-fix-bundle-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/fix-bundle/fix.bundle
@@ -765,7 +765,7 @@ jobs:
           persist-credentials: false
 
       - name: Download the agent's bundle
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: review-fix-bundle-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/in
