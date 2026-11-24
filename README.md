@@ -5,6 +5,10 @@ Reusable GitHub Actions workflows for an agentic software factory: the **Claude 
 `workflow_call` workflow you pin by commit SHA; nothing here names a host, an account or a secret store.
 See [Factory pieces](#factory-pieces) for the rest.
 
+Also here: the public-repo **guards** ([docs/guards.md](docs/guards.md)) and **Python CI for uv
+projects**, a reusable lint and test workflow plus base pre-commit and ruff configs
+([docs/python-ci.md](docs/python-ci.md), scaffold in [`examples/python-uv-repo/`](examples/python-uv-repo)).
+
 A pull request gets an independent review from a reviewer agent. If the reviewer asks for changes,
 a responder agent may push small fixes to the PR branch, and the PR is reviewed once more. The loop
 ends **green** (ready to merge) or **red** with a `needs-human` label. See the header of
@@ -72,6 +76,8 @@ checked out from this repository at `tooling-ref`, never from the repository bei
 |---|---|
 | Issue dispatcher | Partly validated live; see below |
 | Ready when green | **Never run live**; unit-tested only |
+| Label-gated auto-merge | Decision script tested against a stand-in `gh`; **never run live**; concurrency question open |
+| Letta Code | Decision step tested by running it; **never run live** |
 | Work status script | Unit-tested against canned `gh` output |
 | Claude Code hooks (examples) | Unit-tested; used in interactive sessions before being ported here |
 
@@ -90,6 +96,8 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
    `publish` job reads them), plus `CLAUDE_CODE_OAUTH_TOKEN`.
 2. Copy [`examples/dispatch-caller.yml`](examples/dispatch-caller.yml) to
    `.github/workflows/dispatch-ready-issues.yml` and pin `uses:` and `tooling-ref` to one commit SHA.
+   Keep its `permissions:` block whole. If a run shows "startup failure" and no jobs, the caller
+   grants less than a called job asks for: compare the block with the example at your pinned SHA.
 3. Copy [`examples/ticket-implementer.md`](examples/ticket-implementer.md) to
    `.agents/agents/ticket-implementer.md` and edit it. The part marked "CI contract" is read by the workflow.
 4. Add the app's slug to `allowed-bots` in your review caller (see the lesson above).
@@ -97,8 +105,11 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 
 **Inputs** (all optional). `runs-on` (JSON, default `"ubuntu-latest"`), `tooling-ref`, `agent-prompt`
 (default `.agents/agents/ticket-implementer.md`), `ready-label`, `claimed-label`, `needs-human-label`,
+`ready-for-review-label` (default `ready-for-review`: see below),
 `owner-handle` (empty = repository owner) and `mention-owner`, `draft` (default `true`: see below),
 `dispatch-limit` (default 2),
+`uv-version` and `python-version` (install uv before `setup-command`; empty installs nothing, so set
+`uv-version` when your setup or the agent's tools call `uv` and the runner image has none),
 `setup-command` (for example `uv sync --frozen`), `extra-allowed-tools`, `extra-protected-paths`,
 `mcp-config` and `mcp-allowed-tools` (an MCP server for the agent; **off by default**), and
 `secret-source` (`github` by default, or `infisical` with `infisical-domain`, `infisical-project-slug`,
@@ -107,8 +118,19 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 **Draft PRs.** The agent's PR opens as a **draft** by default (`draft: true`). In a repository whose
 automation merges any non-draft PR on green CI, "ready" can mean "merged", so an agent-written PR must
 not become ready without a recorded review. A draft is skipped by the review loop until it is marked ready;
-`ready-when-green` (below) is the documented path from draft to ready, once a human or an author adds its
-label. Set `draft: false` only if nothing in your repository merges on green CI alone.
+`ready-when-green` (below) is the documented path from draft to ready, once its label is on the PR.
+Set `draft: false` only if nothing in your repository merges on green CI alone.
+
+**The finished label.** The agent has finished before the PR is opened, so the dispatcher adds
+`ready-for-review-label` (default `ready-for-review`) to the draft itself. With `ready-when-green` enabled,
+the chain then needs nobody: PR opened, CI green, marked ready, review loop starts. Keep the name equal to
+`ready-when-green`'s `ready-label` and to the label named in the `if:` of your `ready-when-green` caller.
+The label alone does nothing in a repository that does not run
+`ready-when-green`. Set `ready-for-review-label: ""` where automation merges any non-draft PR on green CI
+alone and `ready-when-green` is enabled: there a labelled draft would become ready, and so merge, before
+any review is recorded. No label is added when `draft` is `false`. If the label cannot be added, the PR
+stays open and the job fails with the PR number, so the miss is visible. Add the label by hand then;
+do not re-run the job, because a re-run pushes a new branch and opens a second PR.
 
 **Concurrency.** Select-and-claim is serialised inside the workflow (one group per repository), so two
 overlapping runs cannot claim the same issue. The example caller's own `concurrency` block uses a different
@@ -156,7 +178,8 @@ resulting PR. The generalised inputs in this repository (defaults, `secret-sourc
 
 ### Ready when green (`ready-when-green.yml`)
 
-**What it does.** An author that has finished adds the `ready-for-review` label to its draft PR. Once
+**What it does.** An author that has finished adds the `ready-for-review` label to its draft PR (the
+issue dispatcher adds it to the PRs it opens; a person or an agent started by hand adds it themselves). Once
 the `ci-ok` check is green on its head, the PR is marked ready (which starts the review loop) and the
 label is removed. A stacked PR waits while the PR it is based on is still a draft. No label, no flip.
 
@@ -165,6 +188,10 @@ store `READY_APP_ID` and `READY_APP_PRIVATE_KEY`. Copy
 [`examples/ready-when-green-caller.yml`](examples/ready-when-green-caller.yml), set the CI workflow name
 it listens to, pin the SHA, and set `READY_WHEN_GREEN_ENABLED=true`. Your CI must publish a check called
 `ci-ok` (or set `ci-check`): one required job that depends on all the others.
+
+If this repository also runs the issue dispatcher and merges any non-draft PR on green CI alone, set the
+dispatcher's `ready-for-review-label: ""` **before** you enable this workflow. The dispatcher labels every
+PR it opens, so here each one would be marked ready, and so merged, before a review is recorded.
 
 **Inputs.** `runs-on`, `tooling-ref`, `ready-label` (default `ready-for-review`), `ci-check`
 (default `ci-ok`), `secret-source` and the Infisical coordinates.
@@ -176,6 +203,118 @@ never touched, and a missing or pending `ci-ok` is never read as green.
 
 **Validated vs unverified.** Unit-tested (`tests/test_ready_when_green.py`). **It has never run live**, so the trigger wiring, the token scopes and the flip itself are
 unverified.
+
+### Label-gated auto-merge (`auto-merge.yml`)
+
+**What it does.** Arms GitHub auto-merge on a pull request while it is open, not a draft and carries the
+`automerge` label. It disarms an armed pull request that stops qualifying: the label removed, or the pull
+request converted to draft. Closed and merged pull requests are never touched. GitHub then merges when the
+branch's required checks pass. The decision is `scripts/auto_merge.py`, fetched from `tooling-ref` like the
+other decision scripts; it reads the pull request's live state, not the event, so every run converges.
+
+**Setup.** First turn on the repository setting **Allow auto-merge** (Settings, General, Pull Requests).
+It must be on before a caller is enabled: with it off GitHub refuses the auto-merge request, so the step
+fails on each pull request that qualifies.
+
+Two things to know before labelling anything:
+
+- **Labelling can merge at once.** `gh pr merge --auto` merges at once when the pull request is
+  already mergeable (clean, or only unstable or hooked). With no required checks on the branch there is
+  nothing to wait for, so adding the label merges the pull request right then. Protect the branch with the
+  required checks you want first.
+- **Warning: a merge made with the workflow token starts no `push` workflows.** GitHub withholds
+  workflow runs for events caused by `GITHUB_TOKEN`, so release, deploy or post-merge CI that triggers on
+  `push` to the base branch will not run for these merges. Do not rely on them for anything that must run
+  after a merge.
+
+Then copy [`examples/auto-merge-caller.yml`](examples/auto-merge-caller.yml) and pin the SHA.
+
+**Inputs.** `runs-on`, `tooling-ref`, `label` (default `automerge`), `merge-method` (`squash`, `merge` or
+`rebase`; default `squash`).
+
+**Security model.** `pull_request_target` runs the caller file from the default branch; the job checks out
+only this tooling repository and never the pull request. The job's token has `contents: write` and
+`pull-requests: write`, the least `gh pr merge --auto` needs.
+
+**Open question, not answered here.** Whether a job skipped by its `if:` can displace a pending run in a
+job-level concurrency group has not been observed on a real pull request. The example caller sidesteps it:
+no job-level `if:`, so no run is ever skipped, and every run is idempotent. Observe it on a real pull
+request before adding an `if:` to a caller, and record the answer here.
+
+**Validated vs unverified.** The script is tested against a stand-in `gh` (`tests/test_auto_merge_workflow.py`).
+**It has never run live.**
+
+### Letta Code (`letta-code.yml`)
+
+**What it does.** Lets someone with write access summon a Letta agent. Three things summon it:
+
+- the trigger phrase (default `@letta-code`) in an issue comment, a pull request comment, a pull
+  request review comment or the summary of a pull request review;
+- a new issue whose title or body contains the phrase;
+- the trigger label (default `letta-code`) added to an **issue**.
+
+A pull request body, a label on a pull request and a push never summon it: the action at the pinned
+commit has no trigger for them.
+
+**Off by default.** The caller's job runs only when the repository variable `LETTA_CODE_ENABLED` is
+`true`. With it on but no `LETTA_API_KEY` secret or no `agent-id`, the job reports and skips the agent.
+
+**Setup.** Copy [`examples/letta-code-caller.yml`](examples/letta-code-caller.yml), pin the SHA, store
+the `LETTA_API_KEY` secret, set the `LETTA_AGENT_ID` variable, then set `LETTA_CODE_ENABLED=true`. The
+runner needs bash, npm and the `gh` CLI.
+
+**Inputs.** `runs-on`, `agent-id`, `trigger-phrase`, `label-trigger`.
+
+**Who may summon it.** One step decides, before the action starts. It first checks that the event asks
+for the agent (the phrase or the trigger label is present). Only then does it ask GitHub for the
+actor's permission on the repository, which must be `write` or `admin`: the same question the action
+asks. It refuses:
+
+- anyone with less than write access, including the triage role (which can add labels). The maintain
+  role counts as write, so maintainers may summon it;
+- any account that is not a user, such as a bot (the action applies the same test), and any login
+  GitHub's users endpoint cannot find (some App logins have no `[bot]` suffix);
+- any request on a pull request that comes from a fork. A comment there runs in the base repository
+  with the secret and the write token, and the action would fetch a branch of the fork's name from the
+  base repository: a red run when there is none, work on the wrong branch when there is. A review or
+  review comment on a fork's pull request gets no secret from GitHub, so its log says the key is
+  missing rather than naming the fork.
+
+Every refusal ends in a few seconds with a green run and no agent. The gate is there because the action
+checks write access before it looks for a trigger and **fails** the job for anyone without it, so on a
+public repository every outside comment would otherwise be a red run. If the permission lookup itself
+fails, the step fails red, so a request is never dropped without a sign.
+
+**Things to know.**
+
+- The job starts on every comment. Each one with no request still costs a runner for a few seconds.
+- The gate's phrase test is looser than the action's. The gate accepts the phrase in any letter case
+  and anywhere in the text; the action wants the exact case, standing alone. `@Letta-Code`, or the
+  phrase inside backticks, passes the gate and the action then does nothing: a green run with no agent.
+- An issue opened with both the phrase and the trigger label sends two events, so two agents start.
+- An empty `trigger-phrase` switches the phrase triggers off (it would otherwise match every comment).
+- The action writes the agent's report to the job summary, which is public on a public repository.
+- A commit the agent pushes with `GITHUB_TOKEN` starts no workflow: neither this one nor your CI. So do
+  not make this a required check (new heads would never get a run), and push an empty commit or re-run
+  CI by hand after the agent has worked on a pull request.
+- There is no concurrency group: two requests on one issue run two agents at once. A group would
+  cancel a queued request without telling the person who made it.
+
+**Security model.** The agent job holds contents, issues and pull-requests write, and the API key. The
+caller must never use `pull_request_target`. A comment on a fork's pull request does run with the
+secret and the write token; the deciding step refuses it. No secret and no event text is written into a
+shell script or placed in its environment: the deciding step receives true/false answers, the actor's
+login and a pull request number, plus the job's own token for read-only API calls. Once summoned,
+the agent reads issue, pull request and comment text that anyone may have written, with write access
+and the key in hand. The action is pinned by commit SHA, but it installs the latest Letta Code CLI from
+npm at run time, so the pin does not fix everything that runs.
+
+**Validated vs unverified.** The deciding step is run for real in
+`tests/test_letta_code_workflow.py` against a stand-in for the `gh` CLI, and the rest of the job's
+shape is pinned there. What the action does (its triggers, its write-access check, its treatment of
+bots, its branch checkout) was read in its source at the pinned commit and never run here. **This
+workflow has never run live**: the check name, the behaviour of the expressions on real events, the
+API calls with the job's token, and the fork refusal are all unverified.
 
 ### Work status (`scripts/work_status.py`)
 
@@ -238,6 +377,13 @@ Both assume the label `ready-for-agent` and that branch convention; edit the con
   skipped run would let it merge unreviewed. A required status that is never posted blocks every PR.
 - **One secret per fetch.** Each secret is fetched by name so an agent's environment holds only what
   it needs. The Infisical action is pinned by commit SHA to a version that honours `secret-name`.
+
+## Skill: configure a repository's CI
+
+[`skills/configure-repo-ci/`](skills/configure-repo-ci/SKILL.md) is an agent skill that applies these
+conventions to another repository: the `ci-ok` gate, pre-commit as the lint definition, per-role
+GitHub Apps and tokens, the review loop, legible run logs, and the known variations and drift seen
+across repositories. Copy the folder into your agent's skills directory.
 
 ## Develop
 

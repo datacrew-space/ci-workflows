@@ -37,6 +37,11 @@ jobs:
       contents: read
       issues: write
       pull-requests: read
+      # The reusable `implement` job also reads CI state. Without these three GitHub refuses the run
+      # at startup, with no log, because a called job cannot hold a scope its caller did not grant.
+      checks: read
+      actions: read
+      statuses: read
     with:
       tooling-ref: <COMMIT_SHA>
       # Everything below is optional; the values shown are the defaults.
@@ -45,8 +50,14 @@ jobs:
       # ready-label: ready-for-agent
       # claimed-label: agent-dispatched
       # needs-human-label: needs-human
+      # Added to the draft PR the dispatcher opens; ready-when-green marks a labelled draft ready once
+      # CI is green. Keep it equal to that workflow's `ready-label` and to the label in its caller's
+      # `if:`. "" adds no label: use that where any non-draft PR merges on green CI alone.
+      # ready-for-review-label: ready-for-review
       # owner-handle: your-github-login            # mentioned when an issue needs a human; default: repo owner
       # dispatch-limit: 2
+      # uv-version: "0.13.7"                       # install uv first; a runner image may not carry it
+      # python-version: "3.13"
       # setup-command: uv sync --frozen            # install dependencies before the agent runs
       # extra-allowed-tools: "Bash(uv run pytest:*)"
       # extra-protected-paths: "scripts/deploy* Makefile"

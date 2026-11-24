@@ -1,0 +1,44 @@
+name: Claude Code
+
+# Copy to .github/workflows/claude.yml and pin the `uses:` ref to a commit SHA of
+# datacrew-space/ci-workflows. The caller owns the triggers: these four are every event that can
+# summon Claude. Do not add `pull_request_target`: the job holds the Claude token. Add `assigned` to
+# the `issues` types only if an issue assigned with the phrase in it should count.
+#
+# The job checks the phrase and the author itself and ends green without calling Claude otherwise, so
+# nothing is needed here beyond the triggers. Set the repository variable CI_RUNS_ON to a JSON runner
+# label to use your own runners; a public repository must leave it unset.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  issues:
+    types: [opened]
+  pull_request_review:
+    types: [submitted]
+
+permissions:
+  contents: read
+
+jobs:
+  claude:
+    uses: datacrew-space/ci-workflows/.github/workflows/claude-mention.yml@<COMMIT_SHA>
+    permissions:
+      contents: read
+      pull-requests: read
+      issues: read
+      id-token: write
+      actions: read
+    with:
+      runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}
+      infisical-domain: ${{ vars.INFISICAL_DOMAIN }}
+      infisical-project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
+      # infisical-env-slug: prod
+      # infisical-claude-path: /claude
+      # trigger-phrase: "@claude"
+      # allowed-associations: "OWNER,MEMBER,COLLABORATOR"
+    secrets:
+      INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+      INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}

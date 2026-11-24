@@ -26,7 +26,9 @@ jobs:
       ${{ vars.READY_WHEN_GREEN_ENABLED == 'true' &&
       (github.event_name != 'pull_request_target' || github.event.action == 'ready_for_review' || github.event.label.name == 'ready-for-review') &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) }}
-    # The label name in the `if:` above must match the `ready-label` input.
+    # The label name in the `if:` above must match the `ready-label` input, and the issue dispatcher's
+    # `ready-for-review-label` if you run it. The dispatcher labels every PR it opens: where any non-draft
+    # PR merges on green CI alone, set its `ready-for-review-label: ""` before enabling this workflow.
     uses: datacrew-space/ci-workflows/.github/workflows/ready-when-green.yml@<COMMIT_SHA>
     permissions:
       contents: read

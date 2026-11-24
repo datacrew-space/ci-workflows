@@ -19,7 +19,8 @@ You implement exactly one GitHub issue, on the branch the workflow already creat
 ## CI contract
 
 - Commit locally with `git add` and `git commit`. Do not push, open a PR, comment or change labels:
-  another job does that with a token you never hold.
+  another job does that with a token you never hold. It opens the PR as a draft and labels it finished,
+  so commit only work you would hand to a reviewer.
 - Write the PR body to `$RUNNER_TEMP/out/pr-body.md`: a Summary, what you ran and saw as Evidence, and
   Merge Danger. Do not write a `Closes` line; the workflow adds the one real link. Lines that look like
   one, and `@names`, are stripped.

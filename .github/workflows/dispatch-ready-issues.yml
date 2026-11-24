@@ -85,6 +85,13 @@ on:
         description: Label set when an issue ended without a PR; removing it retries the issue
         type: string
         default: needs-human
+      ready-for-review-label:
+        description: >-
+          Label the dispatcher adds to the draft PR it opens, to say the agent has finished. It must match
+          ready-when-green's `ready-label`, which marks a labelled draft ready once CI is green. Empty adds
+          no label; nothing is added when `draft` is false.
+        type: string
+        default: ready-for-review
       owner-handle:
         description: User or team (no @) to mention when an issue needs a human. Empty means the repository owner.
         type: string
@@ -108,6 +115,17 @@ on:
         description: >-
           Whitespace-separated globs the agent may not change, added to the built-in list (.github/,
           .claude/, agent prompts and skills, AGENTS.md, lint config). The agent prompt is added for you.
+        type: string
+        default: ""
+      uv-version:
+        description: >-
+          uv version to install before `setup-command`, e.g. the one your CI pins. Empty installs
+          nothing: set it when `setup-command` or the agent's tools call `uv` and the runner image
+          does not carry it.
+        type: string
+        default: ""
+      python-version:
+        description: Python version for uv to use (only read when `uv-version` is set). Empty leaves the choice to uv.
         type: string
         default: ""
       setup-command:
@@ -227,10 +245,17 @@ jobs:
           REPO: ${{ github.repository }}
           NUMBERS: ${{ steps.select.outputs.numbers }}
           CLAIMED_LABEL: ${{ inputs.claimed-label }}
+          READY_FOR_REVIEW_LABEL: ${{ inputs.ready-for-review-label }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
           gh label create "$CLAIMED_LABEL" --repo "$REPO" --color 5319E7 \
             --description "The dispatcher started an agent on this issue" > /dev/null 2>&1 || true
+          # The publish job adds this label to the PR it opens. It is made here so that it exists, with
+          # a colour and a description, before any PR does, and so that publish only ever adds it.
+          if [ -n "$READY_FOR_REVIEW_LABEL" ]; then
+            gh label create "$READY_FOR_REVIEW_LABEL" --repo "$REPO" --color 0E8A16 \
+              --description "The author has finished; mark this draft ready once CI is green" > /dev/null 2>&1 || true
+          fi
           claimed=()
           for n in $(echo "$NUMBERS" | tr -d '[] ' | tr ',' ' '); do
             if gh issue edit "$n" --repo "$REPO" --add-label "$CLAIMED_LABEL" > /dev/null; then
@@ -348,6 +373,20 @@ jobs:
           echo "args=$args" >> "$GITHUB_OUTPUT"
           echo "tools=$tools" >> "$GITHUB_OUTPUT"
 
+      # uv is not on every runner image. It comes from the same pinned action the Python CI uses, so no
+      # caller has to download an installer inside `setup-command`. The action puts uv on PATH for the
+      # steps below, the agent's included.
+      - name: Install uv
+        if: ${{ inputs.uv-version != '' }}
+        uses: astral-sh/setup-uv@1db35dd8eee11c5894872e0b383ae6c406cf738d # v10.4.0
+        with:
+          version: ${{ inputs.uv-version }}
+          python-version: ${{ inputs.python-version }}
+          # Never cached, unlike the Python CI. The action's post step would save uv's cache after the
+          # agent ran, under a key later runs and the caller's own CI can restore, and the agent's test
+          # code can write to that cache. Nothing this job writes may outlive it.
+          enable-cache: false
+
       - name: Set up the project
         if: ${{ inputs.setup-command != '' }}
         env:
@@ -357,7 +396,7 @@ jobs:
       - name: Run the implementer agent
         id: implement-agent
         continue-on-error: true
-        uses: anthropics/claude-code-action@4d75e5f390ee76b2e09c1980ecc99ff3a2e088c8 # v1.0.275
+        uses: anthropics/claude-code-action@acfe7992852970efb4fee683d63d628e3e52df67 # v1.0.286
         env:
           MCP_TOKEN: ${{ secrets.MCP_TOKEN || env.MCP_TOKEN }}
         with:
@@ -466,7 +505,7 @@ jobs:
       - name: Mint the implementer push token
         id: push-token
         if: ${{ steps.download.outcome == 'success' }}
-        uses: actions/create-github-app-token@v2.1.4
+        uses: actions/create-github-app-token@v2.2.2
         with:
           app-id: ${{ secrets.IMPLEMENTER_APP_ID || env.IMPLEMENTER_APP_ID }}
           private-key: ${{ secrets.IMPLEMENTER_APP_PRIVATE_KEY || env.IMPLEMENTER_APP_PRIVATE_KEY }}
@@ -572,9 +611,48 @@ jobs:
           printf '\n\nCloses #%s\n\nOpened by the issue dispatcher ([run](%s)).\n' "$ISSUE" "$RUN_URL" >> "$body"
           draft_flag=()
           [ "$DRAFT" = "true" ] && draft_flag=(--draft)
-          GH_TOKEN="$PUSH_TOKEN" gh pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$branch" \
-            --title "$title" --body-file "$body" "${draft_flag[@]}"
-          echo "pushed $count commit(s) to $branch and opened a PR" >> "$GITHUB_STEP_SUMMARY"
+          # `gh pr create` prints the new PR's URL; the label step below reads the number from it.
+          # No pipe after it: without pipefail a pipe would hide a failed create. Only the last line is
+          # kept, so nothing gh prints can add a second `key=value` line to $GITHUB_OUTPUT.
+          pr_url=$(GH_TOKEN="$PUSH_TOKEN" gh pr create --repo "$REPO" --base "$BASE_BRANCH" --head "$branch" \
+            --title "$title" --body-file "$body" "${draft_flag[@]}")
+          pr_url="${pr_url##*$'\n'}"
+          if [ -z "$pr_url" ]; then
+            echo "::error::the PR was opened from $branch but gh printed no URL, so it was not labelled; label it by hand and do not re-run this job (a re-run opens a second PR)"
+            exit 1
+          fi
+          echo "pr-url=$pr_url" >> "$GITHUB_OUTPUT"
+          echo "pushed $count commit(s) to $branch and opened a PR: $pr_url" >> "$GITHUB_STEP_SUMMARY"
+
+      # The agent has finished before this job opens the PR, so the dispatcher is the "author that has
+      # finished" and adds the label ready-when-green waits for. Without it the draft stays a draft for
+      # ever: the agent may not label and holds no token that could. The app token is used on purpose: a
+      # label set with GITHUB_TOKEN starts no workflow, so ready-when-green would not hear about it.
+      # A PR that is not a draft is ready already, and the label would only linger on it.
+      - name: Label the draft as finished
+        id: label
+        if: ${{ steps.push.outputs.pr-url != '' && inputs.draft && inputs.ready-for-review-label != '' }}
+        env:
+          GH_TOKEN: ${{ steps.push-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_URL: ${{ steps.push.outputs.pr-url }}
+          READY_FOR_REVIEW_LABEL: ${{ inputs.ready-for-review-label }}
+        run: |
+          # The PR is open whatever happens here, so a failure must be loud: a draft without the label
+          # is skipped by the review loop and nothing else will ever pick it up.
+          number="${PR_URL##*/}"
+          case "$number" in
+            '' | *[!0-9]*)
+              echo "::error::could not read a PR number from the URL the push step reported; add the ${READY_FOR_REVIEW_LABEL} label to the new PR by hand and do not re-run this job (a re-run opens a second PR)"
+              exit 1
+              ;;
+          esac
+          if ! gh api --method POST "repos/$REPO/issues/$number/labels" -f "labels[]=$READY_FOR_REVIEW_LABEL" > /dev/null; then
+            echo "::error::PR #$number is open but could not be labelled ${READY_FOR_REVIEW_LABEL}; add the label by hand and do not re-run this job (a re-run opens a second PR)"
+            echo "PR #$number is open but NOT labelled ${READY_FOR_REVIEW_LABEL}. Add the label by hand. Do not re-run this job: a re-run opens a second PR." >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "labelled #$number ${READY_FOR_REVIEW_LABEL}" >> "$GITHUB_STEP_SUMMARY"
 
   # Every dispatched issue ends with a PR or with a human. No agent runs here.
   report:
