@@ -1,0 +1,69 @@
+name: Auto-merge (reusable)
+
+# A reusable workflow. It arms GitHub auto-merge on a pull request only while the pull request is open,
+# not a draft, and carries the `label` label; it disarms auto-merge when an armed pull request stops
+# qualifying (label removed, converted to draft). GitHub then merges once the branch's required checks
+# pass. The decision is scripts/auto_merge.py (tests/test_auto_merge_workflow.py), which reads the pull
+# request's live state rather than trusting the event, so any run converges on the right answer.
+#
+# The caller owns the triggers (examples/auto-merge-caller.yml). Security: pull_request_target runs the
+# CALLER file from the default branch and this job checks out only this tooling repository at
+# `tooling-ref`. Pull request code is never checked out and no event text reaches a shell; the one
+# event value used, the pull request number, is a number passed through the environment.
+#
+# Needs the repository setting "Allow auto-merge" on, or arming fails (and so does the step).
+# A merge made with GITHUB_TOKEN starts no further workflows, as GitHub documents for that token.
+
+on:
+  workflow_call:
+    inputs:
+      runs-on:
+        type: string
+        default: '"ubuntu-latest"'
+      tooling-ref:
+        description: Ref (use a commit SHA) of this repository to take the script from
+        type: string
+        default: main
+      label:
+        description: Label that asks for auto-merge
+        type: string
+        default: automerge
+      merge-method:
+        description: "`squash`, `merge` or `rebase`"
+        type: string
+        default: squash
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 5
+    permissions:
+      contents: write # `gh pr merge --auto` is a merge request on the branch
+      pull-requests: write
+    # One run at a time per pull request. Runs queue rather than cancel, and since the script reads live
+    # state, a run that a newer one displaces is harmless.
+    concurrency:
+      group: auto-merge-${{ github.repository }}-${{ github.event.pull_request.number }}
+      cancel-in-progress: false
+    steps:
+      - name: Checkout the script (this tooling repository, not the caller)
+        uses: actions/checkout@v4
+        with:
+          repository: datacrew-space/ci-workflows
+          ref: ${{ inputs.tooling-ref }}
+          path: ci-tooling
+          sparse-checkout: scripts/auto_merge.py
+          persist-credentials: false
+
+      - name: Reconcile auto-merge with the label
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          AUTOMERGE_LABEL: ${{ inputs.label }}
+          MERGE_METHOD: ${{ inputs.merge-method }}
+        shell: bash
+        run: python3 -I ci-tooling/scripts/auto_merge.py | tee -a "$GITHUB_STEP_SUMMARY"

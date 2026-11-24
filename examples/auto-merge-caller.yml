@@ -1,0 +1,32 @@
+name: Auto-merge
+
+# Copy to .github/workflows/auto-merge.yml. Pin BOTH the `uses:` ref and `tooling-ref` to the same
+# commit SHA of datacrew-space/ci-workflows. Turn on the repository setting "Allow auto-merge" first.
+# pull_request_target runs THIS file from the default branch, so a pull request cannot edit it to run
+# its own code with a write token. Do not add a checkout of the pull request here.
+#
+# `closed` is not listed: GitHub clears auto-merge when a pull request closes, and the script never
+# touches a closed one. `reopened` is, so a reopened labelled pull request is armed again.
+#
+# Deliberately no job-level `if:` and no concurrency block here: every listed event runs the reconcile,
+# which reads live state and does nothing when there is nothing to change. A skipped job could
+# displace a pending run in a concurrency group, and this layout avoids ever asking.
+
+on:
+  pull_request_target:
+    types: [labeled, unlabeled, ready_for_review, converted_to_draft, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  auto-merge:
+    uses: datacrew-space/ci-workflows/.github/workflows/auto-merge.yml@<COMMIT_SHA>
+    permissions:
+      contents: write
+      pull-requests: write
+    with:
+      tooling-ref: <COMMIT_SHA>
+      # label: automerge
+      # merge-method: squash                  # squash, merge or rebase
+      # runs-on: '"ubuntu-latest"'
