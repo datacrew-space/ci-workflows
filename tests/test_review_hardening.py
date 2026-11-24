@@ -39,8 +39,8 @@ INFISICAL_FIRST_TAG_WITH_SECRET_NAME = (1, 0, 17)
 # anthropics/claude-code-action v1.0.286. Renovate bumps the workflows; update these two lines only after reading
 # the action's changes since the old pin (this test is the gate that makes someone look).
 CLAUDE_ACTION_REPO = "anthropics/claude-code-action"
-CLAUDE_ACTION_TAG = "v1.0.286"
-CLAUDE_ACTION_SHA = "acfe7992852970efb4fee683d63d628e3e52df67"
+CLAUDE_ACTION_TAG = "v1.0.289"
+CLAUDE_ACTION_SHA = "eb56b6666facdbd501035f4a0269d8caee2e7a8b"
 
 
 @pytest.fixture(scope="module")
