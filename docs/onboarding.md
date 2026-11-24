@@ -40,11 +40,17 @@ An installation token can only be narrowed from the App's own grant, so each App
 strongest level any of its tokens asks for in `.github/workflows/claude-code-review.yml`. Leave every
 other permission at *No access*, turn the webhook off, and install on the target repository only.
 
+The `ci-review-orchestrator` row below goes beyond that file: it adds what `ready-when-green` asks for
+(Contents: read and write, Checks: read, Actions: read), for the usual case where the orchestrator is also
+the App behind `READY_APP_ID`. The onboarding script prints the review loop's list only, so add those
+three by hand. If you would rather not give the orchestrator Contents write, point `READY_APP_ID` at
+`ci-review-responder`, which already has every scope `ready-when-green` asks for.
+
 | App | Repository permissions |
 |-----|------------------------|
 | `ci-code-reviewer` | Contents: read. Pull requests: read and write. Issues: read. Checks: read. Actions: read. Commit statuses: read |
 | `ci-review-responder` | Contents: read and write. Pull requests: read and write. Issues: read and write. Checks: read. Actions: read. Commit statuses: read |
-| `ci-review-orchestrator` | Commit statuses: read and write. Pull requests: read and write. Issues: read and write. Checks: read. Contents: read. Actions: read (`ready-when-green` reads each PR's check rollup; without them the token mints but `gh pr list --json statusCheckRollup` fails) |
+| `ci-review-orchestrator` | Commit statuses: read and write. Pull requests: read and write. Issues: read and write. Checks: read. Actions: read (`ready-when-green` reads each PR's check rollup; without them the token mints but `gh pr list --json statusCheckRollup` fails). Contents: read and write (GitHub refuses to mark a draft ready for a token without it; grant it **before** pinning a commit that requests it, because a token request for a scope the installation lacks is refused outright) |
 
 Only the responder's name matters to the workflow: it matches that bot login (and uses the bot's
 numeric user id as the commit author). Both are caller inputs, `responder-bot-login` and
