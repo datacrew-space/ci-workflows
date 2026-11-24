@@ -36,7 +36,7 @@ INFISICAL_REPO = "Infisical/secrets-action"
 INFISICAL_TAG = "v1.0.18"
 INFISICAL_SHA = "d2e351f16c6ca20d17c85e6c992e04bdeb64e87d"
 INFISICAL_FIRST_TAG_WITH_SECRET_NAME = (1, 0, 17)
-# anthropics/claude-code-action v1.0.286. Renovate bumps the workflows; update these two lines only after reading
+# anthropics/claude-code-action v1.0.289. Renovate bumps the workflows; update these two lines only after reading
 # the action's changes since the old pin (this test is the gate that makes someone look).
 CLAUDE_ACTION_REPO = "anthropics/claude-code-action"
 CLAUDE_ACTION_TAG = "v1.0.289"
