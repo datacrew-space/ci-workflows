@@ -272,7 +272,7 @@ jobs:
         run: |
           set -eu
           case "$IMAGE" in ghcr.io/*) ;; *) echo "::error::image-name must start with ghcr.io/" >&2; exit 1 ;; esac
-          if [ "$IMAGE" != "$(printf '%s' "$IMAGE" | tr 'A-Z' 'a-z')" ]; then
+          if [ "$IMAGE" != "$(printf '%s' "$IMAGE" | tr '[:upper:]' '[:lower:]')" ]; then
             echo "::error::image-name must be lowercase" >&2
             exit 1
           fi
