@@ -52,7 +52,7 @@ jobs:
           git -C "$RUNNER_TEMP/ci-tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
           git -C "$RUNNER_TEMP/ci-tooling" checkout -q FETCH_HEAD
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.13"
 
