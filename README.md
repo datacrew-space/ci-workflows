@@ -62,7 +62,11 @@ PRs must be added too**, for example the issue dispatcher's GitHub App: otherwis
 the run fails before it starts, and `review-verdict` never leaves `pending`. This workflow exposes it as
 the `allowed-bots` input (added together with the dispatcher; before that only the responder could be
 allowed): `allowed-bots: my-implementer-app` (the app's slug, without `[bot]`). It only adds to the list
-and never accepts `*`. **Not yet validated:** the dispatcher run described below stopped at PR-open; a
+and never accepts `*`. The same goes for the App behind `ready-when-green`: it is the actor of the
+`ready_for_review` event, so without its slug here the review of every PR it marks ready fails with
+`Workflow initiated by non-human actor` (observed live, and observed fixed by adding the slug). A PR
+opened before the caller changed can keep running the old caller file until its branch is updated from
+the base. **Not yet validated:** the dispatcher run described below stopped at PR-open; a
 bot-initiated review of that PR has not been observed.
 
 ## Factory pieces
@@ -75,7 +79,7 @@ checked out from this repository at `tooling-ref`, never from the repository bei
 | Piece | Status |
 |---|---|
 | Issue dispatcher | Partly validated live; see below |
-| Ready when green | **Never run live**; unit-tested only |
+| Ready when green | Validated live once: CI went green on a labelled draft, the PR was marked ready, the label came off and the review loop ran. Stacks not observed |
 | Label-gated auto-merge | Decision script tested against a stand-in `gh`; **never run live**; concurrency question open |
 | Letta Code | Decision step tested by running it; **never run live** |
 | Work status script | Unit-tested against canned `gh` output |
@@ -196,7 +200,11 @@ actions read; it can be the same app as another: `ci-review-responder` already h
 store `READY_APP_ID` and `READY_APP_PRIVATE_KEY`. Copy
 [`examples/ready-when-green-caller.yml`](examples/ready-when-green-caller.yml), set the CI workflow name
 it listens to, pin the SHA, and set `READY_WHEN_GREEN_ENABLED=true`. Your CI must publish a check called
-`ci-ok` (or set `ci-check`): one required job that depends on all the others.
+`ci-ok` (or set `ci-check`): one required job that depends on all the others. Then add the App's slug to
+`allowed-bots` in your review caller, unless it is the review loop's own responder App: otherwise the
+review started by marking the PR ready is refused, because the actor is a bot that is not listed (see the
+lesson above). If it is the responder, the review that follows counts as round 2 (the round counter reads who sent the
+event), so a first `changes-requested` goes straight to a human. Prefer a separate App and list it.
 
 Contents write is there because GitHub refuses to mark a draft ready for a token without it. The job
 checks out only this tooling repository and runs no pull request code. Give the App that permission
@@ -215,8 +223,10 @@ the job checks out only this tooling repository, never PR code, and no event tex
 app token is needed because a PR marked ready with `GITHUB_TOKEN` would start no workflow. Fork PRs are
 never touched, and a missing or pending `ci-ok` is never read as green.
 
-**Validated vs unverified.** Unit-tested (`tests/test_ready_when_green.py`). **It has never run live**, so the trigger wiring, the token scopes and the flip itself are
-unverified.
+**Validated vs unverified.** Unit-tested (`tests/test_ready_when_green.py`), and run live once: CI went
+green on a labelled draft, the PR was marked ready, the label came off and the review loop ran. Not yet
+observed: a stack cascading (a parent marked ready starting its child), and a run with
+`secret-source: infisical`.
 
 ### Label-gated auto-merge (`auto-merge.yml`)
 

@@ -118,8 +118,8 @@ on:
         default: .agents/agents/review-responder.md
       allowed-bots:
         description: >-
-          Comma-separated logins (no `[bot]`) of EVERY other bot that opens or pushes PRs in the calling
-          repository, e.g. the issue dispatcher's app. The review responder is always allowed. A bot not
+          Comma-separated logins (no `[bot]`) of EVERY other bot that opens, pushes or marks ready PRs in the
+          calling repository, e.g. the issue dispatcher's app and the app behind ready-when-green. The review responder is always allowed. A bot not
           listed makes the review action refuse to start. Never `*`.
         type: string
         default: ""
