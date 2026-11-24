@@ -618,3 +618,44 @@ def test_only_the_agent_job_installs_uv(jobs):
     for name, job in jobs.items():
         if name != "implement":
             assert all("setup-uv" not in str(s.get("uses", "")) for s in job["steps"]), name
+
+
+# --- The prompt names the only commit commands the tool list admits -----------------------------------
+
+
+def _committing_agents() -> list[tuple[str, str, str]]:
+    """(workflow file, job, step id) for every agent step that may commit only through the narrow git rules."""
+    found = []
+    for path in sorted(WF.glob("*.yml")):
+        text = path.read_text(encoding="utf-8")
+        if "Bash(git add -- *)" not in text:
+            continue
+        for job_name, job in load(path)["jobs"].items():
+            for s in job.get("steps", []):
+                if "claude-code-action" in str(s.get("uses", "")) and "git commit" in s["with"].get("prompt", ""):
+                    found.append((path.name, job_name, s["id"]))
+    return found
+
+
+def test_the_agents_that_commit_are_the_implementer_and_the_responder():
+    assert _committing_agents() == [
+        ("claude-code-review.yml", "respond", "respond-agent"),
+        ("dispatch-ready-issues.yml", "implement", "implement-agent"),
+    ]
+
+
+@pytest.mark.parametrize(("workflow", "job_name", "step_id"), _committing_agents())
+def test_the_prompt_names_the_exact_commit_commands_the_tool_list_admits(workflow, job_name, step_id):
+    """Told only "git add / git commit", an agent ran `git add <paths>`, was refused and committed nothing.
+
+    The tool list admits `git add -- <paths>` and `git commit -m <message>` and nothing else, so two
+    finished tickets (47 and 43 passing tests) were thrown away with the runner.
+    """
+    prompt = step(load(WF / workflow)["jobs"][job_name], step_id)["with"]["prompt"]
+    flat = " ".join(prompt.split())
+    assert "git add / git commit" not in flat
+    assert "`git add -- <paths>`" in flat
+    assert '`git commit -m "<subject>" -m "<body>"`' in flat
+    assert "every other form is refused" in flat
+    for trap in ("`&&`", "`cd`", "heredoc", "`$(...)`"):
+        assert trap in flat, trap

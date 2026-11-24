@@ -115,6 +115,12 @@ implementer agent on it, and opens a PR with `Closes #N`. An issue that ends wit
 `secret-source` (`github` by default, or `infisical` with `infisical-domain`, `infisical-project-slug`,
 `infisical-env-slug`, `infisical-claude-path`, `infisical-github-path`).
 
+**How the agent commits.** Its tool list admits two git write commands and no other form:
+`git add -- <paths>` and `git commit -m "<subject>" -m "<body>"`, each run on its own. The workflow's
+prompt says so. Do not teach another form in your agent file (`git add -A`, a commit chained with `&&`, a
+heredoc message): the command is refused, the agent commits nothing, and its finished work is lost with
+the runner. The same holds for the review responder.
+
 **Draft PRs.** The agent's PR opens as a **draft** by default (`draft: true`). In a repository whose
 automation merges any non-draft PR on green CI, "ready" can mean "merged", so an agent-written PR must
 not become ready without a recorded review. A draft is skipped by the review loop until it is marked ready;
