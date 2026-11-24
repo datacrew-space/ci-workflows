@@ -158,6 +158,10 @@ def test_the_workflow_token_can_read_checks_and_statuses():
     mint = next(s for s in steps if str(s.get("uses", "")).startswith("actions/create-github-app-token"))
     assert mint["with"].get("permission-checks") == "read"
     assert mint["with"].get("permission-statuses") == "read"
+    # markPullRequestReadyForReview is refused ("Resource not accessible by integration") for a token
+    # with pull requests write and contents read: seen live on the first labelled green draft.
+    assert mint["with"].get("permission-pull-requests") == "write"
+    assert mint["with"].get("permission-contents") == "write"
 
 
 def test_a_gh_that_cannot_run_reports_the_exception_not_a_guess(monkeypatch, capsys):

@@ -121,7 +121,10 @@ jobs:
           permission-issues: write
           permission-checks: read # gh pr list --json statusCheckRollup reads check runs
           permission-statuses: read # ... and commit statuses; without these `gh pr list` can fail
-          permission-contents: read # ... and the commit the rollup hangs off
+          # write, not read: GitHub refuses markPullRequestReadyForReview ("Resource not accessible by
+          # integration") without it. Read alone covers the commit the rollup hangs off. This job checks
+          # out only the tooling repository and runs no pull request code.
+          permission-contents: write
           permission-actions: read # ... and each check's workflowRun; without these the query fails with "Resource not accessible by integration"
 
       - name: Mark labelled green drafts ready
