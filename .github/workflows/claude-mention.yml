@@ -26,8 +26,9 @@ name: Claude mention (reusable)
 # No fork refusal here, unlike letta-code.yml. The action restores its own configuration from the
 # base branch, not from the pull request, `restrict_untrusted_prs` limits its tools for authors without
 # write access, and only the allowed associations can summon it. What is left is prompt injection from
-# the content of a fork's pull request. The action runs on fork pull requests (its `allow_fork_prs` defaults to true) and this workflow has no
-# input to change that.
+# the content of a fork's pull request. The action itself skips fork pull requests (`allow_fork_prs`
+# defaults to false since v1.0.289): on a fork's pull request it logs a warning and exits without
+# running Claude. This workflow does not set it.
 #
 # Security: the job holds the Claude Code OAuth token once Claude is summoned, and reads issue, pull
 # request and comment text that anyone may have written. No secret and no event text is written into a

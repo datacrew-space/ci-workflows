@@ -109,6 +109,19 @@ def test_claude_code_action_is_pinned_by_sha(jobs):
         assert step(jobs[job], step_id)["uses"] == f"{CLAUDE_ACTION_REPO}@{CLAUDE_ACTION_SHA}"
 
 
+def test_every_claude_code_action_use_is_the_pin():
+    """Scan every workflow, so a partial bump or a hand edit outside the review loop fails (#53)."""
+    workflows = Path(__file__).resolve().parents[1] / ".github" / "workflows"
+    uses = {}
+    for path in sorted(workflows.glob("*.y*ml")):
+        for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            m = re.search(rf"uses:\s*({re.escape(CLAUDE_ACTION_REPO)}@\S+)", line)
+            if m:
+                uses[f"{path.name}:{n}"] = m.group(1)
+    assert len(uses) >= 3, uses
+    assert set(uses.values()) == {f"{CLAUDE_ACTION_REPO}@{CLAUDE_ACTION_SHA}"}, uses
+
+
 @pytest.mark.skipif(os.environ.get("REVIEW_LOOP_VERIFY_PINS") != "1", reason="needs network and gh")
 def test_pins_match_upstream():
     def gh(*args: str) -> str:
