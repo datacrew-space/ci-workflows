@@ -17,6 +17,14 @@ name: Claude Code Review (reusable)
 # Rounds: a push by ci-review-responder makes the next review round 2 (the last). Any other push
 # starts again at round 1, because a person is steering.
 #
+# When it runs: not for drafts, fork PRs or a PR based on another branch. And not twice for one
+# head: the `gate` job (no model) reads the head SHA's statuses, and when the newest `review-verdict`
+# is `success` or `failure` and was set by the orchestrator App, the paid review is skipped and the
+# existing verdict stays untouched. This is what makes ready_for_review, reopened or a retarget on an
+# unchanged head free. A pending, error, missing or foreign status never skips, and neither does a
+# re-run of the workflow (run_attempt > 1): re-running is the fix for a tooling failure. The
+# decision is scripts/review-skip.sh.
+#
 # Everything environment-specific is an input or a secret of the CALLER: the secret store
 # coordinates, the runner labels, the agent prompt paths. Nothing here names a host or an account.
 # The helper scripts (guard, scanner, report) are NOT read from the repository under review: the
@@ -106,6 +114,12 @@ on:
           (gh api users/<login>%5Bbot%5D --jq .id). Must belong to responder-bot-login.
         type: string
         default: "355840606"
+      orchestrator-bot-login:
+        description: >-
+          Login of the review-orchestrator GitHub App without the [bot] suffix. A finished
+          `review-verdict` status on the PR head set by this App makes the review skip itself.
+        type: string
+        default: ci-review-orchestrator
       reviewer-agent:
         description: >-
           Path of the reviewer prompt in the calling repository. Read from the BASE branch, not the PR.
@@ -130,11 +144,69 @@ on:
         required: true
 
 jobs:
-  claude-review:
-    # Opt-in belongs to the caller (gate the calling job). Not drafts, and never fork PRs: this runs
-    # with a token.
+  # No model, no secrets: only decides whether this head still needs the paid review. Fail open:
+  # any trouble here lets the review run. A skipped gate (draft, fork, other base) skips the review too.
+  gate:
     if: >-
       ${{ !github.event.pull_request.draft
+      && github.event.pull_request.head.repo.full_name == github.repository
+      && github.event.pull_request.base.ref == inputs.base-branch }}
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    outputs:
+      skip: ${{ steps.decide.outputs.skip }}
+    permissions:
+      statuses: read
+    steps:
+      # Same fetch as the review job, but a failure here must not stop the review: fail open.
+      - name: Locate the tooling
+        continue-on-error: true
+        env:
+          TOOLING_REF: ${{ inputs.tooling-ref }}
+        run: |
+          set -eu
+          tooling="$RUNNER_TEMP/ci-tooling"
+          git init -q "$tooling"
+          git -C "$tooling" fetch -q --depth 1 https://github.com/datacrew-space/ci-workflows.git "$TOOLING_REF"
+          git -C "$tooling" checkout -q FETCH_HEAD
+          echo "TOOLING=$tooling" >> "$GITHUB_ENV"
+
+      - name: Skip the review when this head already has a finished verdict
+        id: decide
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          ORCHESTRATOR: ${{ inputs.orchestrator-bot-login }}
+          ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          set -u
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          if [ ! -f "${TOOLING:-}/scripts/review-skip.sh" ]; then
+            echo "::warning::gate: tooling not available; reviewing"
+            exit 0
+          fi
+          if ! [[ "$ORCHESTRATOR" =~ ^[A-Za-z0-9-]+$ && "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::warning::gate: unexpected orchestrator-bot-login or head sha; reviewing"
+            exit 0
+          fi
+          gh api --paginate "repos/$REPO/commits/$SHA/statuses?per_page=100" --jq '.[]' | jq -s . > "$RUNNER_TEMP/statuses.json"
+          out=$(bash "$TOOLING/scripts/review-skip.sh" "$RUNNER_TEMP/statuses.json" "$ORCHESTRATOR" "$ATTEMPT")
+          decision="${out%%|*}"
+          reason="${out#*|}"
+          echo "gate: $decision ($reason)"
+          if [ "$decision" = "skip" ]; then
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "review skipped for $SHA: $reason; the existing review-verdict is unchanged" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+  claude-review:
+    needs: gate
+    # Opt-in belongs to the caller (gate the calling job). Not drafts, and never fork PRs: this runs
+    # with a token. Not when the gate found a finished verdict for this head.
+    if: >-
+      ${{ needs.gate.outputs.skip != 'true'
+      && !github.event.pull_request.draft
       && github.event.pull_request.head.repo.full_name == github.repository
       && github.event.pull_request.base.ref == inputs.base-branch }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}

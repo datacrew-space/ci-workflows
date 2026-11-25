@@ -32,9 +32,12 @@ def test_the_new_inputs_exist_with_safe_defaults(doc):
 
 def test_a_pr_based_on_another_branch_is_skipped(jobs):
     """The WHOLE expression: a weakened `||` or a dropped clause must fail this test."""
+    gate = " ".join(str(jobs["gate"]["if"]).split())
+    assert "github.event.pull_request.base.ref == inputs.base-branch" in gate
     cond = " ".join(str(jobs["claude-review"]["if"]).split())
     assert cond == (
-        "${{ !github.event.pull_request.draft"
+        "${{ needs.gate.outputs.skip != 'true'"
+        " && !github.event.pull_request.draft"
         " && github.event.pull_request.head.repo.full_name == github.repository"
         " && github.event.pull_request.base.ref == inputs.base-branch }}"
     )

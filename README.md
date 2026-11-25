@@ -46,6 +46,11 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 | `tooling-ref` | Commit of this repository to take the guard, scanner and report scripts from |
 | `reviewer-agent`, `responder-agent` | Agent prompt paths in the calling repository. They are read from the **base branch**, not from the PR (see design notes). If a file is not on the base yet, the generic template from `tooling-ref` is used, with a warning |
 | `allowed-bots` | Comma-separated logins of every other bot that opens or pushes PRs (see the lesson below). Letters, digits and `-` only; `*` is refused. Default empty |
+| `orchestrator-bot-login` | Login (no `[bot]`) of the review-orchestrator App; default `ci-review-orchestrator`. A finished `review-verdict` set by it on the PR head lets the review skip itself (see below) |
+
+## One review per head
+
+A `gate` job (no model, `statuses: read` only) runs before the review and reads the commit statuses of the PR head. When the newest `review-verdict` is `success` or `failure` **and** the orchestrator App set it, the paid review is skipped and the existing verdict stays as it is; the job summary says so, with the SHA. So `ready_for_review`, `reopened` or a base retarget on an unchanged head cost nothing. The review still runs when the status is `pending`, `error`, missing or set by anyone else, when the workflow is re-run (`run_attempt` above 1, the documented fix for a tooling failure), and whenever the gate itself fails. Note that a tooling failure leaves a `failure` status too: re-run the workflow to retry it, because a new event on the same head will not. The decision is [`scripts/review-skip.sh`](scripts/review-skip.sh).
 
 ## Upgrading: the reviewer App needs Issues: read
 

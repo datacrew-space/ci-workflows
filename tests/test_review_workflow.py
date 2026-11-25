@@ -523,3 +523,34 @@ def test_tooling_is_never_checked_out_with_actions_checkout_outside_the_workspac
             run = runs[0]["run"]
             assert run.count("ci-tooling") == 1 and 'echo "TOOLING=$tooling" >> "$GITHUB_ENV"' in run
             assert "fetch -q --depth 1" in run and "persist" not in run
+
+
+def test_the_gate_reads_statuses_only_and_the_review_waits_for_it(jobs):
+    assert jobs["gate"]["permissions"] == {"statuses": "read"}
+    assert jobs["claude-review"]["needs"] == "gate"
+    assert " ".join(str(jobs["claude-review"]["if"]).split()).startswith(
+        "${{ needs.gate.outputs.skip != 'true' && !github.event.pull_request.draft"
+    )
+    assert not any("claude-code-action" in str(s.get("uses", "")) for s in jobs["gate"]["steps"])
+
+
+def test_a_gate_failure_cannot_skip_the_review(jobs):
+    """The decide step fails open: skip is written false first and true only on a decided skip."""
+    decide = step(jobs["gate"], "decide")
+    assert decide["continue-on-error"] is True
+    run = decide["run"]
+    assert run.index("skip=false") < run.index("skip=true")
+    assert "review-skip.sh" in run and "github.run_attempt" in str(decide["env"])
+
+
+def test_a_skipped_review_leaves_the_later_jobs_and_the_verdict_alone(jobs):
+    """Skipped claude-review means no outcome output: respond and push do not run, report skips."""
+    assert "outputs.outcome == 'changes-requested'" in str(jobs["respond"]["if"])
+    assert "has_bundle == 'true'" in str(jobs["push"]["if"])
+    assert "needs.claude-review.result != 'skipped'" in str(jobs["report"]["if"])
+    writers = [n for n, j in jobs.items() for s in j["steps"] if "context=review-verdict" in str(s.get("run", ""))]
+    assert "gate" not in writers
+
+
+def test_the_orchestrator_login_input_defaults_to_the_orchestrator_app():
+    assert ON_INPUTS["orchestrator-bot-login"]["default"] == "ci-review-orchestrator"
