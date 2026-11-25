@@ -3,14 +3,16 @@ name: Pull request title (reusable)
 # Optional check that a pull request's title follows Conventional Commits, so squash-merge subjects
 # share one style: `type(optional scope)!: subject`. Call it from a thin workflow on `pull_request`
 # with the `edited` type, so fixing the title clears the failure without a push; see
-# examples/pr-title-caller.yml. It reads nothing from the repository and needs no permissions.
+# examples/pr-title-caller.yml. To enforce it, make its check (`title / title` from that caller) a
+# required status check; it cannot join a ci-ok gate in another workflow file, because `needs` only
+# names jobs in the same file. It reads nothing from the repository and needs no permissions.
 # The title is untrusted: it reaches the shell only through `env`, and is never printed.
 
 on:
   workflow_call:
     inputs:
       types:
-        description: Allowed commit types, separated by spaces or newlines.
+        description: Allowed commit types (lowercase letters), separated by spaces, commas or newlines.
         type: string
         default: "build chore ci docs feat fix perf refactor revert style test"
       runs-on:
@@ -33,21 +35,29 @@ jobs:
         env:
           TITLE: ${{ github.event.pull_request.title }}
           TYPES: ${{ inputs.types }}
+          # `[a-z]` in a regex means ASCII lowercase only in the C locale.
+          LC_ALL: C
         run: |
           set -euo pipefail
           rule='Title must be "type(optional scope)!: subject", e.g. "fix(lint): keep quoted args together".'
           if [ -z "${TITLE:-}" ]; then
-            echo "::error::No pull request title. Call this workflow from a pull_request trigger." >&2
+            echo "::error::No pull request title. Call this workflow from a pull_request trigger."
             exit 1
           fi
-          read -r -d '' -a allowed <<<"$TYPES" || true
+          read -r -d '' -a allowed <<<"${TYPES//,/ }" || true
           if [ "${#allowed[@]}" -eq 0 ]; then
-            echo "::error::The types input lists no types." >&2
+            echo "::error::The types input lists no types."
             exit 1
           fi
-          re='^([a-z]+)(\([^()]+\))?(!)?: ([^[:space:]].*)$'
+          for t in "${allowed[@]}"; do
+            if [[ ! "$t" =~ ^[a-z]+$ ]]; then
+              echo "::error::The types input holds an entry that is not lowercase letters; separate types with spaces, commas or newlines."
+              exit 1
+            fi
+          done
+          re='^([a-z]+)(\([^()[:space:]]+\))?(!)?: ([^[:space:]].*)$'
           if [[ ! "$TITLE" =~ $re ]]; then
-            echo "::error::${rule}" >&2
+            echo "::error::${rule}"
             exit 1
           fi
           type="${BASH_REMATCH[1]}"
@@ -57,5 +67,5 @@ jobs:
               exit 0
             fi
           done
-          echo "::error::Type '${type}' is not allowed. Use one of: ${allowed[*]}. ${rule}" >&2
+          echo "::error::Type '${type}' is not allowed. Use one of: ${allowed[*]}. ${rule}"
           exit 1

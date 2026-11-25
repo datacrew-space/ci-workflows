@@ -344,20 +344,27 @@ API calls with the job's token, and the fork refusal are all unverified.
 ### PR title check (`pr-title.yml`)
 
 **What it does.** Fails a pull request whose title is not `type(optional scope)!: subject`, so
-squash-merge subjects share one style. It prints the format and an example on failure. Optional: it is
-not part of `ci-ok` unless the caller adds its job to the gate's `needs`.
+squash-merge subjects share one style. It prints the format and an example on failure. Optional:
+to enforce it, make its check, `title / title` from the example caller, a required status check. It
+cannot join `ci-ok`'s `needs`, because `ci-ok` lives in another workflow file and `needs` only names
+jobs in the same file. Before requiring it, note that dependency-bot titles (`Bump x from 1 to 2`)
+and GitHub's `Revert "..."` titles fail: set the bot's commit prefix (for example `chore(deps):`) and
+edit revert titles.
 
 **Setup.** Copy [`examples/pr-title-caller.yml`](examples/pr-title-caller.yml) and pin the SHA. Keep
-`edited` in its `types`, so fixing the title reruns the check without a push.
+`edited` in its `types`, so fixing the title reruns the check without a push. Body and base edits
+fire it too; each run takes a few seconds of a runner.
 
-**Inputs.** `runs-on`, `types` (allowed types separated by spaces or newlines; default the Conventional
-Commits set `build chore ci docs feat fix perf refactor revert style test`).
+**Inputs.** `runs-on`, `types` (allowed types, lowercase letters, separated by spaces, commas or
+newlines; default the Conventional Commits set `build chore ci docs feat fix perf refactor revert style
+test`). A scope may not contain spaces or parentheses.
 
 **Security model.** No permissions, no checkout and no third-party action. The title reaches the shell
 only through `env`, is matched as data and is never printed.
 
 **Validated vs unverified.** The step's script is run for real in `tests/test_pr_title.py`, including a
-title with `$(...)`, backticks and a workflow command. **It has never run live.**
+title with `$(...)`, backticks and a workflow command. **It has never run live**, so the check name
+`title / title` is expected, not observed.
 
 ### Work status (`scripts/work_status.py`)
 

@@ -24,9 +24,22 @@ needs_bash = pytest.mark.skipif(BASH is None, reason="needs bash")
 DEFAULT_TYPES = WF.get("on", WF.get(True))["workflow_call"]["inputs"]["types"]["default"]
 
 
+RULE = "type(optional scope)!: subject"
+
+
 def check(title: str, types: str = DEFAULT_TYPES) -> subprocess.CompletedProcess:
-    env = {**os.environ, "TITLE": title, "TYPES": types}
+    env = {**os.environ, **{k: v for k, v in STEP["env"].items() if "${{" not in v}, "TITLE": title, "TYPES": types}
     return subprocess.run([BASH, "-c", STEP["run"]], env=env, capture_output=True, text=True)
+
+
+def test_the_check_name_and_runner_are_part_of_the_interface():
+    # Enforcing the check means requiring `title / title`: the caller job, then this job's name.
+    job = WF["jobs"]["title"]
+    assert job["name"] == "title"
+    assert job["runs-on"] == "${{ fromJSON(inputs.runs-on) }}"
+    assert job["timeout-minutes"] == 5
+    assert STEP["env"]["LC_ALL"] == "C"
+    assert CALLER["jobs"]["title"]["with"]["runs-on"] == "${{ vars.CI_RUNS_ON || '\"ubuntu-latest\"' }}"
 
 
 def test_title_reaches_the_shell_only_through_env_and_nothing_is_granted():
@@ -59,6 +72,7 @@ def test_example_reruns_on_title_edits_and_grants_nothing():
         "refactor!: drop the old input",
         "chore(deps)!: bump uv to 0.14",
         "docs: explain `paths-ignore` & why; not (here)",
+        "fix(a-b_c.d/e): scope with punctuation",
     ],
 )
 def test_valid_titles_pass(title):
@@ -70,39 +84,60 @@ def test_valid_titles_pass(title):
 @pytest.mark.parametrize(
     ("title", "message"),
     [
-        ("Add a docs-only skip", "type(optional scope)!: subject"),
-        ("fix:no space", "type(optional scope)!: subject"),
-        ("fix:    ", "type(optional scope)!: subject"),
-        ("Fix: capitalised type", "type(optional scope)!: subject"),
-        ("fix(): empty scope", "type(optional scope)!: subject"),
+        ("Add a docs-only skip", RULE),
+        ("fix:no space", RULE),
+        ("fix:    ", RULE),
+        ("Fix: capitalised type", RULE),
+        ("fix(): empty scope", RULE),
+        ("fix( ): blank scope", RULE),
+        ("fix(a b): spaced scope", RULE),
+        ("feat(a(b)): nested scope", RULE),
+        ("fix(a)!!: two bangs", RULE),
+        ("WIP fix: prefix before the type", RULE),
+        ('Revert "feat: x"', RULE),
+        ("Bump actions/checkout from 4 to 5", RULE),
         ("wip: not a type", "Type 'wip' is not allowed"),
+        ("wip: not a type", RULE),
         ("", "No pull request title"),
     ],
 )
 def test_invalid_titles_fail_and_state_the_rule(title, message):
     done = check(title)
     assert done.returncode != 0
-    assert message in done.stderr
+    assert "::error::" in done.stdout
+    assert message in done.stdout
 
 
 @needs_bash
-def test_types_input_narrows_the_allowed_set():
-    assert check("feat: x", types="fix\ndocs").returncode != 0
-    assert check("docs: x", types="fix\ndocs").returncode == 0
+@pytest.mark.parametrize("types", ["fix\ndocs", "fix docs", "fix, docs", "fix,docs", " fix\t,\n docs "])
+def test_types_input_narrows_the_allowed_set_in_any_separator(types):
+    assert check("feat: x", types=types).returncode != 0
+    assert check("docs: x", types=types).returncode == 0
+    assert check("fix: x", types=types).returncode == 0
+
+
+@needs_bash
+@pytest.mark.parametrize("types", ["fix Docs", "fix;docs", "fix ci/cd"])
+def test_a_types_entry_that_is_not_lowercase_letters_fails(types):
+    done = check("fix: x", types=types)
+    assert done.returncode != 0
+    assert "not lowercase letters" in done.stdout
 
 
 @needs_bash
 def test_an_empty_types_input_fails_instead_of_allowing_everything():
     done = check("feat: x", types="  \n")
     assert done.returncode != 0
-    assert "lists no types" in done.stderr
+    assert "lists no types" in done.stdout
 
 
 @needs_bash
-def test_title_is_matched_as_data_and_never_echoed(tmp_path):
+@pytest.mark.parametrize("prefix", ["fix: ", "Fix: ", "wip: "])
+def test_title_is_matched_as_data_and_never_echoed(tmp_path, prefix):
+    # Passing, malformed and unknown-type titles: none runs a command or reaches the log.
     marker = tmp_path / "ran"
-    title = f"fix: $(touch {marker.as_posix()}) `touch {marker.as_posix()}` ::warning::forged"
+    title = f"{prefix}$(touch {marker.as_posix()}) `touch {marker.as_posix()}` ::warning::forged"
     done = check(title)
-    assert done.returncode == 0, done.stderr
+    assert done.returncode == (0 if prefix == "fix: " else 1), done.stdout + done.stderr
     assert not marker.exists()
     assert "forged" not in done.stdout + done.stderr
