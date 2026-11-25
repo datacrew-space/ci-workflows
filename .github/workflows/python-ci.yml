@@ -206,8 +206,10 @@ jobs:
             echo "${jobs} run: ${why}." >> "$GITHUB_STEP_SUMMARY"
             echo "${jobs} run; the job summary says why."
           else
+            # The backticks are literal Markdown code spans, not a command substitution.
+            # shellcheck disable=SC2016
             listed_patterns=$(printf '`%s` ' "${patterns[@]}")
-            echo "${jobs} skipped: all ${count} changed files match skip-paths (${listed_patterns% })." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "${jobs} skipped: every changed file (${count}) matches skip-paths (${listed_patterns% })." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
   lint:

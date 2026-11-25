@@ -126,7 +126,7 @@ def test_docs_only_change_skips_and_says_why(tmp_path):
     done, output, summary = classify(tmp_path, ["README.md", "docs/guide/a.md", "img/x.png"], "*.md\nimg/*\n")
     assert done.returncode == 0, done.stderr
     assert output == "code=false\n"
-    assert "Lint and test skipped: all 3 changed files match skip-paths (`*.md` `img/*`)." in summary
+    assert "Lint and test skipped: every changed file (3) matches skip-paths (`*.md` `img/*`)." in summary
     assert classify.args[:2] == ["api", f"repos/o/r/compare/{'a' * 40}...{'b' * 40}"]
     assert classify.args[2] == "--jq"
 
@@ -134,7 +134,7 @@ def test_docs_only_change_skips_and_says_why(tmp_path):
 @needs_bash
 def test_with_run_test_off_the_summary_names_only_lint(tmp_path):
     _, _, summary = classify(tmp_path, ["README.md"], "*.md", run_test="false")
-    assert "Lint skipped: all 1 changed files" in summary
+    assert "Lint skipped: every changed file (1) matches" in summary
     _, _, summary = classify(tmp_path, ["a.py"], "*.md", run_test="false")
     assert "Lint run:" in summary
 
