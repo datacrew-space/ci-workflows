@@ -1,7 +1,8 @@
 """What the ci-review-orchestrator reports at the end of a review run.
 
 `needs-human` (label and @mention) is only for a decision about the code: two rounds did not
-converge, or the responder pushed nothing. A tooling failure is red with no label and no ping.
+converge, or the responder pushed nothing (state `failure`). A tooling failure is state `error`, still
+red, with no label and no ping, and review-skip.sh retries it on the next event.
 """
 
 import subprocess
@@ -44,7 +45,7 @@ def test_round_one_without_a_push_needs_a_human(pushed):
 def test_a_responder_that_never_reached_its_push_is_a_tooling_failure():
     """Setup or agent error in `respond` is not a decision about the code: no label, no ping."""
     state, label, ping, message = report("changes-requested", "1", "failed")
-    assert (state, label, ping) == ("failure", "remove", "no")
+    assert (state, label, ping) == ("error", "remove", "no")
     assert "did not finish" in message and "re-run the workflow" in message
 
 
@@ -55,9 +56,9 @@ def test_round_two_still_requesting_changes_needs_a_human():
 
 
 @pytest.mark.parametrize("outcome", ["no-verdict", "tooling-failure", "", "anything-else"])
-def test_tooling_failures_are_red_without_label_or_ping(outcome):
+def test_tooling_failures_are_error_without_label_or_ping(outcome):
     state, label, ping, message = report(outcome)
-    assert (state, label, ping) == ("failure", "remove", "no")
+    assert (state, label, ping) == ("error", "remove", "no")
     assert "re-run the workflow" in message
 
 
