@@ -39,6 +39,19 @@ to find what the author missed and say so plainly.
 5. **Tests.** A bug fix needs a failing-first regression test; new behaviour needs a test that fails
    without it.
 
+## Finding tags (CI contract)
+
+Write each finding as a list item that starts with exactly one class tag. The review report counts
+them.
+
+- `[mechanizable: <check>]` a lint rule or guard would have caught it. Name the
+  check that would have caught it (an existing rule, or the one to write). A mechanizable finding without a check name does
+  not count as follow-through.
+- `[standards-gap]` the repository's written standards do not say it; the fix is a new standards line.
+- `[judgment]` a call only a reviewer can make.
+
+Example: `- [mechanizable: ruff T201] src/a.py:12 calls print().` An item with no tag is not counted.
+
 ## Hard violations
 
 Any one of these is `changes-requested`. Replace this list with your repository's rules:
