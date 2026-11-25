@@ -13,7 +13,8 @@ name: Claude Code Review (reusable)
 #
 # A PR ends GREEN (ready to merge) or RED. PENDING only means an agent is working. Red with
 # `needs-human` means the code needs a person's decision (two rounds did not converge, or the
-# responder pushed nothing). Red without the label is a tooling failure: re-run the workflow.
+# responder pushed nothing). Red without the label is a tooling failure (status `error`): re-run
+# the workflow, or let the next event on the head retry it.
 # Rounds: a push by ci-review-responder makes the next review round 2 (the last). Any other push
 # starts again at round 1, because a person is steering.
 #
@@ -22,8 +23,9 @@ name: Claude Code Review (reusable)
 # is `success` or `failure` and was set by the orchestrator App, the paid review is skipped and the
 # existing verdict stays untouched. This is what makes ready_for_review, reopened or a retarget on an
 # unchanged head free. A pending, error, missing or foreign status never skips, and neither does a
-# re-run of the workflow (run_attempt > 1): re-running is the fix for a tooling failure. The
-# decision is scripts/review-skip.sh.
+# re-run of the workflow (run_attempt > 1). A tooling failure is reported as `error` (see
+# scripts/review-report.sh), so the next event on the same head retries it; `failure` is only a
+# decision about the code. The decision is scripts/review-skip.sh.
 #
 # Everything environment-specific is an input or a secret of the CALLER: the secret store
 # coordinates, the runner labels, the agent prompt paths. Nothing here names a host or an account.
@@ -197,6 +199,7 @@ jobs:
           echo "gate: $decision ($reason)"
           if [ "$decision" = "skip" ]; then
             echo "skip=true" >> "$GITHUB_OUTPUT"
+            echo "::notice title=review skipped::$SHA: $reason"
             echo "review skipped for $SHA: $reason; the existing review-verdict is unchanged" >> "$GITHUB_STEP_SUMMARY"
           fi
 

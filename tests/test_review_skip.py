@@ -1,6 +1,7 @@
 """The review is skipped only when this head already has a finished verdict from the orchestrator."""
 
 import json
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,7 +9,11 @@ from pathlib import Path
 import pytest
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "review-skip.sh"
-pytestmark = pytest.mark.skipif(shutil.which("jq") is None, reason="needs jq (present on CI runners)")
+# Locally a missing jq skips; in CI (the `CI` env var is set) it fails, so the tests cannot go silent.
+if shutil.which("jq") is None:
+    if os.environ.get("CI"):
+        pytest.fail("jq is missing on this CI runner: the review-skip tests cannot run", pytrace=False)
+    pytestmark = pytest.mark.skip(reason="needs jq (present on CI runners)")
 BOT = "ci-review-orchestrator[bot]"
 
 

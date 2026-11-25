@@ -528,9 +528,16 @@ def test_tooling_is_never_checked_out_with_actions_checkout_outside_the_workspac
 def test_the_gate_reads_statuses_only_and_the_review_waits_for_it(jobs):
     assert jobs["gate"]["permissions"] == {"statuses": "read"}
     assert jobs["claude-review"]["needs"] == "gate"
-    assert " ".join(str(jobs["claude-review"]["if"]).split()).startswith(
-        "${{ needs.gate.outputs.skip != 'true' && !github.event.pull_request.draft"
-    )
+    condition = " ".join(str(jobs["claude-review"]["if"]).split())
+    # The skip clause is added to the draft, fork and base-branch clauses, never in place of them.
+    for clause in (
+        "needs.gate.outputs.skip != 'true'",
+        "!github.event.pull_request.draft",
+        "github.event.pull_request.head.repo.full_name == github.repository",
+        "github.event.pull_request.base.ref == inputs.base-branch",
+    ):
+        assert clause in condition, clause
+    assert condition.count("&&") == 3 and "||" not in condition
     assert not any("claude-code-action" in str(s.get("uses", "")) for s in jobs["gate"]["steps"])
 
 
