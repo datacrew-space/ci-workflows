@@ -35,7 +35,7 @@ jobs:
       # Skip lint and test (shown as skipped) on pull requests that change only these paths:
       # skip-paths: |
       #   *.md
-      #   docs/*
+      #   docs/*.png
 
   # Add repository-specific jobs here and list them in `needs` below.
 

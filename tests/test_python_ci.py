@@ -193,6 +193,8 @@ def test_scaffold_caller_uses_the_reusable_workflow_and_keeps_the_gate():
     caller = load(SCAFFOLD / ".github" / "workflows" / "ci.yml")
     assert sorted(caller["jobs"]) == ["ci-ok", "python"]
     assert caller["jobs"]["python"]["uses"].startswith("datacrew-space/ci-workflows/.github/workflows/python-ci.yml@")
+    # The docs-only skip lives inside the reusable workflow; an `if:` here would skip the gate's input.
+    assert "if" not in caller["jobs"]["python"]
     gate = caller["jobs"]["ci-ok"]
     assert gate["needs"] == ["python"]
     assert gate["if"] == "always()"

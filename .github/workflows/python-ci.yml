@@ -32,11 +32,12 @@ on:
           whose changed files all match, lint and test are skipped as jobs, so they show as skipped in
           the checks list, and the classify job's summary says why. A pattern is a shell pattern
           matched against the whole path, and `*` also matches `/` (`*.md` matches docs/a.md). Lines
-          starting with `#` are ignored. Empty (the default) never skips; pushes never skip.
+          starting with `#` are ignored. Empty (the default) never skips; pushes and pull requests to
+          other branches never skip. Needs the gh CLI on the runner. See docs/python-ci.md.
         type: string
         default: ""
       runs-on:
-        description: JSON runner label or label array for both jobs, e.g. '"ubuntu-latest"' or '["self-hosted","linux"]'.
+        description: JSON runner label or label array for every job, e.g. '"ubuntu-latest"' or '["self-hosted","linux"]'.
         type: string
         default: '"ubuntu-latest"'
       python-version:
@@ -133,13 +134,18 @@ env:
 
 jobs:
   # Decides whether a pull request changed only paths the caller listed as not code. It runs only on
-  # pull requests with skip-paths set; otherwise it shows as skipped and lint and test run. The skip
+  # pull requests to the default branch with skip-paths set; otherwise it shows as skipped and lint
+  # and test run. A stacked pull request is compared with its parent branch, and retargeting it to
+  # the default branch (an `edited` event) reruns nothing, so it would keep a green ci-ok earned
+  # against the parent: other bases therefore always run lint and test. The skip
   # is a job-level `if:` on lint and test, never an early exit inside a step, so a skipped job is
   # reported as skipped and never looks like a pass of work that did not run. A trigger-level
   # `paths-ignore` would be wrong here: the caller's required ci-ok would never report.
   classify:
     name: classify
-    if: inputs.skip-paths != '' && github.event_name == 'pull_request'
+    if: >-
+      inputs.skip-paths != '' && github.event_name == 'pull_request'
+      && github.event.pull_request.base.ref == github.event.repository.default_branch
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 5
     outputs:
@@ -153,11 +159,14 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           SKIP_PATHS: ${{ inputs.skip-paths }}
+          RUN_TEST: ${{ inputs.run-test }}
         run: |
           set -euo pipefail
           # The compare API lists at most 300 files. At that size the list may be incomplete, so the
           # change counts as code. Any API error fails this job, which fails the gate: never a skip.
-          listed=$(gh api "repos/${REPO}/compare/${BASE_SHA}...${HEAD_SHA}" --jq '(.files // []) | length, .[].filename')
+          # A rename lists both paths, so moving code under a skipped path still counts as code.
+          listed=$(gh api "repos/${REPO}/compare/${BASE_SHA}...${HEAD_SHA}" \
+            --jq '(.files // []) | length, (.[] | .filename, (.previous_filename // empty))')
           count=$(head -n 1 <<<"$listed")
           files=()
           mapfile -t files < <(tail -n +2 <<<"$listed" | sed '/^$/d')
@@ -185,20 +194,27 @@ jobs:
                 # shellcheck disable=SC2053
                 if [[ "$f" == $p ]]; then matched=true; break; fi
               done
-              if [ "$matched" = false ]; then code=true; why="${f} matches no skip-paths pattern"; break; fi
+              # File names are chosen by the pull request's author: they go to the summary only,
+              # in a code span, and never to the log.
+              if [ "$matched" = false ]; then code=true; why="\`${f//\`/}\` matches no skip-paths pattern"; break; fi
             done
           fi
           echo "code=${code}" >> "$GITHUB_OUTPUT"
+          jobs="Lint and test"
+          if [ "$RUN_TEST" != true ]; then jobs="Lint"; fi
           if [ "$code" = true ]; then
-            echo "Lint and test run: ${why}." | tee -a "$GITHUB_STEP_SUMMARY"
+            echo "${jobs} run: ${why}." >> "$GITHUB_STEP_SUMMARY"
+            echo "${jobs} run; the job summary says why."
           else
-            echo "Lint and test skipped: all ${#files[@]} changed files match skip-paths." | tee -a "$GITHUB_STEP_SUMMARY"
+            listed_patterns=$(printf '`%s` ' "${patterns[@]}")
+            echo "${jobs} skipped: all ${count} changed files match skip-paths (${listed_patterns% })." | tee -a "$GITHUB_STEP_SUMMARY"
           fi
 
   lint:
     name: lint
     needs: classify
-    # Runs when classify was skipped or found code; skipped only when classify found no code.
+    # Runs when classify was skipped, found code or failed (a failed classify already fails the
+    # gate); skipped only when classify found no code.
     if: ${{ !cancelled() && needs.classify.outputs.code != 'false' }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 15
