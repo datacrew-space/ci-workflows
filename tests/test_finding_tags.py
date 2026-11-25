@@ -8,8 +8,11 @@ follow-through (write the guard) stays visible.
 import subprocess
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "count-finding-tags.sh"
 AGENT = Path(__file__).resolve().parents[1] / "examples" / "code-reviewer.md"
+RESPONDER = Path(__file__).resolve().parents[1] / "examples" / "review-responder.md"
 PR_TEMPLATE = Path(__file__).resolve().parents[1] / ".github" / "pull_request_template.md"
 
 
@@ -73,3 +76,40 @@ def test_reviewer_prompt_asks_for_the_tags_and_the_check_name():
 def test_pr_template_asks_for_the_guard_follow_through():
     text = PR_TEMPLATE.read_text()
     assert "guard" in text and "standards" in text and "[mechanizable" in text
+
+
+def test_tags_inside_fenced_code_blocks_are_not_findings(tmp_path):
+    review = "- [judgment] real.\n```\n- [mechanizable: x] in a fence\n- [judgment] too\n```\n~~~md\n- [judgment] tilde\n~~~\n- [standards-gap] after.\n"
+    got = count(tmp_path, review)
+    assert (got["mechanizable"], got["standards-gap"], got["judgment"]) == (0, 1, 1)
+
+
+@pytest.mark.parametrize("box", ["[ ]", "[x]", "[X]"])
+def test_task_list_checkboxes_are_not_findings(tmp_path, box):
+    assert set(count(tmp_path, f"- {box} guard added\n").values()) == {0}
+
+
+def test_the_pr_template_itself_counts_zero():
+    out = subprocess.run(["bash", str(SCRIPT), str(PR_TEMPLATE)], capture_output=True, text=True, check=True).stdout
+    assert set(int(p.split("=")[1]) for p in out.split()) == {0}
+
+
+def test_script_sticks_to_posix_awk():
+    """CI runners may ship mawk: no gawk-only syntax."""
+    text = SCRIPT.read_text()
+    for gawk_only in (r"\s", r"\w", r"\d", "gensub", "IGNORECASE", "PROCINFO", "asort", "strftime", "RSTART, RLENGTH, "):
+        assert gawk_only not in text
+    assert "match(line, /" in text and ", arr)" not in text
+
+
+def test_workflow_writes_the_counts_to_the_step_summary_before_posting():
+    wf = (SCRIPT.parents[1] / ".github" / "workflows" / "claude-code-review.yml").read_text()
+    summary = 'echo "finding tags: $(bash "$TOOLING/scripts/count-finding-tags.sh" "$review")" >> "$GITHUB_STEP_SUMMARY"'
+    post = 'gh pr review "$PR_NUMBER" --repo "$REPO" --comment --body-file "$review"'
+    assert wf.count(summary) == 1 and wf.index(summary) < wf.index(post)
+
+
+def test_responder_prompt_asks_for_the_guard_follow_through():
+    text = RESPONDER.read_text()
+    for needle in ("[mechanizable", "guard", "standards line", "say why not"):
+        assert needle in text

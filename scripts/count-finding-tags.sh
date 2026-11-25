@@ -7,13 +7,17 @@
 #   [standards-gap]          a written rule in the repository's standards docs is missing
 #   [judgment]               stays with the reviewer
 # unnamed-check counts mechanizable findings with no check name (also counted in mechanizable).
-# unrecognized counts items that start with some other [tag]. Items with no tag count nowhere, so an
+# unrecognized counts items that start with some other [tag]. Fenced code blocks and task-list
+# checkboxes (`- [ ]`, `- [x]`) are skipped. Items with no tag count nowhere, so an
 # older untagged review reads as all zeros. Exit 1 when the file cannot be read.
 set -uo pipefail
 file="${1:-}"
 [ -r "$file" ] || { echo "count-finding-tags: cannot read '$file'" >&2; exit 1; }
 awk '
-  BEGIN { m = s = j = u = r = 0 }
+  BEGIN { m = s = j = u = r = 0; fence = 0 }
+  # Tags inside fenced code blocks are examples, not findings.
+  /^[ 	]*(```|~~~)/ { fence = !fence; next }
+  fence { next }
   {
     line = tolower($0)
     if (!match(line, /^[ \t]*([-*]|[0-9]+[.)])[ \t]+\[[^]]*\]/)) next
@@ -25,6 +29,7 @@ awk '
       if (name == "") u++
     } else if (tag == "standards-gap") s++
     else if (tag == "judgment") j++
+    else if (tag ~ /^[ x]$/) next   # a task-list checkbox, not a tag
     else r++
   }
   END { printf "mechanizable=%d standards-gap=%d judgment=%d unnamed-check=%d unrecognized=%d\n", m, s, j, u, r }
