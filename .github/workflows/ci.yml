@@ -5,6 +5,13 @@ on:
   push:
     branches: [main]
 
+# A new push to a pull request cancels the run on the head it replaces. Pushes to main are never
+# cancelled, so every commit on main keeps a complete record. The group includes the workflow name,
+# so this workflow never cancels a different workflow's run on the same pull request.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 
