@@ -45,6 +45,11 @@ only thing left, make no commit: the workflow then hands the PR to a human, whic
 4. **Write the response** to `$RUNNER_TEMP/response/response.md` (CI contract). The first line must
    be exactly `## Review response (round N)`, then a table:
 
+   Findings carry a class tag. For each one you fix, apply the guard follow-through in the same
+   commit when it is small and unprotected: a `[mechanizable: <check>]` finding gets the guard (or
+   the check named), a `[standards-gap]` finding gets the standards line. Otherwise say why not in
+   the Outcome cell ("Deferred: guard needs a protected file"). Never skip it silently.
+
    | # | Finding | Outcome | Evidence |
    |---|---------|---------|----------|
    | 1 | ... | Fixed in <sha> / Declined: <reason> / Deferred: <why> / Needs a human: protected file / Unclear: <what is missing> | ... |

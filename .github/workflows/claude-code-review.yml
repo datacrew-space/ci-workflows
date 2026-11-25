@@ -468,6 +468,7 @@ jobs:
           if [ -n "$REPORT_URL" ]; then
             printf '\n\n---\nReview files (kept 14 days): %s\n' "$REPORT_URL" >> "$review"
           fi
+          echo "finding tags: $(bash "$TOOLING/scripts/count-finding-tags.sh" "$review")" >> "$GITHUB_STEP_SUMMARY"
           gh pr review "$PR_NUMBER" --repo "$REPO" --comment --body-file "$review" > /dev/null
 
   # Round 1 only: the workflow counts rounds (verdict-to-status.sh), so `changes-requested` here
