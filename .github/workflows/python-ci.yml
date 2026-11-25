@@ -26,6 +26,15 @@ on:
           (its ci-ok must then need both).
         type: boolean
         default: true
+      skip-paths:
+        description: >-
+          Path patterns, one per line, for files that are not code (docs, images). On a pull request
+          whose changed files all match, lint and test are skipped as jobs, so they show as skipped in
+          the checks list, and the classify job's summary says why. A pattern is a shell pattern
+          matched against the whole path, and `*` also matches `/` (`*.md` matches docs/a.md). Lines
+          starting with `#` are ignored. Empty (the default) never skips; pushes never skip.
+        type: string
+        default: ""
       runs-on:
         description: JSON runner label or label array for both jobs, e.g. '"ubuntu-latest"' or '["self-hosted","linux"]'.
         type: string
@@ -123,8 +132,74 @@ env:
   UV_HTTP_TIMEOUT: "60"
 
 jobs:
+  # Decides whether a pull request changed only paths the caller listed as not code. It runs only on
+  # pull requests with skip-paths set; otherwise it shows as skipped and lint and test run. The skip
+  # is a job-level `if:` on lint and test, never an early exit inside a step, so a skipped job is
+  # reported as skipped and never looks like a pass of work that did not run. A trigger-level
+  # `paths-ignore` would be wrong here: the caller's required ci-ok would never report.
+  classify:
+    name: classify
+    if: inputs.skip-paths != '' && github.event_name == 'pull_request'
+    runs-on: ${{ fromJSON(inputs.runs-on) }}
+    timeout-minutes: 5
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - name: Classify the changed paths
+        id: classify
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          SKIP_PATHS: ${{ inputs.skip-paths }}
+        run: |
+          set -euo pipefail
+          # The compare API lists at most 300 files. At that size the list may be incomplete, so the
+          # change counts as code. Any API error fails this job, which fails the gate: never a skip.
+          listed=$(gh api "repos/${REPO}/compare/${BASE_SHA}...${HEAD_SHA}" --jq '(.files // []) | length, .[].filename')
+          count=$(head -n 1 <<<"$listed")
+          files=()
+          mapfile -t files < <(tail -n +2 <<<"$listed" | sed '/^$/d')
+          patterns=()
+          while IFS= read -r line || [ -n "$line" ]; do
+            line="${line%$'\r'}"
+            line="${line#"${line%%[![:space:]]*}"}"
+            line="${line%"${line##*[![:space:]]}"}"
+            case "$line" in ''|'#'*) continue ;; esac
+            patterns+=("$line")
+          done <<<"$SKIP_PATHS"
+          code=false
+          why=""
+          if [ "$count" -ge 300 ]; then
+            code=true; why="the pull request changes 300 or more files, more than the API lists"
+          elif [ "${#files[@]}" -eq 0 ]; then
+            code=true; why="no changed files were listed"
+          elif [ "${#patterns[@]}" -eq 0 ]; then
+            code=true; why="skip-paths holds no patterns"
+          else
+            for f in "${files[@]}"; do
+              matched=false
+              for p in "${patterns[@]}"; do
+                # Unquoted right-hand side: a shell pattern, where `*` also matches `/`.
+                # shellcheck disable=SC2053
+                if [[ "$f" == $p ]]; then matched=true; break; fi
+              done
+              if [ "$matched" = false ]; then code=true; why="${f} matches no skip-paths pattern"; break; fi
+            done
+          fi
+          echo "code=${code}" >> "$GITHUB_OUTPUT"
+          if [ "$code" = true ]; then
+            echo "Lint and test run: ${why}." | tee -a "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Lint and test skipped: all ${#files[@]} changed files match skip-paths." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
   lint:
     name: lint
+    needs: classify
+    # Runs when classify was skipped or found code; skipped only when classify found no code.
+    if: ${{ !cancelled() && needs.classify.outputs.code != 'false' }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 15
     env:
@@ -269,7 +344,8 @@ jobs:
 
   test:
     name: test
-    if: inputs.run-test
+    needs: classify
+    if: ${{ !cancelled() && inputs.run-test && needs.classify.outputs.code != 'false' }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 20
     defaults:

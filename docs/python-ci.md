@@ -29,6 +29,7 @@ Two jobs. `lint` runs `pre-commit run --all-files` at the repository root. `test
 
 | Input | Default | Meaning |
 |---|---|---|
+| `skip-paths` | `""` | Path patterns, one per line, for files that are not code. A pull request whose changed files all match skips `lint` and `test`, shown as skipped (see [Skipping docs-only pull requests](#skipping-docs-only-pull-requests)). Empty never skips |
 | `run-test` | `true` | Run the `test` job. `false` skips it and leaves `lint` running (see [Keeping your own test job](#keeping-your-own-test-job)) |
 | `runs-on` | `"ubuntu-latest"` | **JSON** label or label array for both jobs |
 | `python-version` | `3.13` | Python for uv |
@@ -83,6 +84,32 @@ test job. Its `ci-ok` must `needs` both the called-workflow job and its local te
 can be missing from the gate. With `run-test: false` the shared `python / test` reports as skipped;
 keep `ci-ok` failing only on `failure` or `cancelled` (as the scaffold's gate does), because a
 skipped job must not fail it. The shared workflow adds no pre-sync scripts or services.
+
+### Skipping docs-only pull requests
+
+Set `skip-paths` to the patterns of files that are not code:
+
+```yaml
+    with:
+      skip-paths: |
+        *.md
+        docs/*
+```
+
+On a pull request, the `python / classify` job lists the changed files (through the compare API, with
+the job's read-only token). If every file matches a pattern, `python / lint` and `python / test` are
+skipped as jobs, so the checks list shows them as skipped, and the classify job's summary says which
+case applied. A pattern is a shell pattern matched against the whole path, and `*` also matches `/`.
+
+- Any file that matches no pattern runs both jobs, and the summary names that file.
+- Pushes, manual runs and an empty `skip-paths` never skip. `classify` then shows as skipped.
+- A change of 300 or more files runs both jobs, because the compare API lists at most 300.
+- An API error fails `classify`, so the gate goes red. It never skips.
+- The caller's `python` job reports `success` when lint and test were skipped this way, so `ci-ok`
+  never has to accept a skipped needed job.
+
+Do not use `paths-ignore` (or `paths`) on the caller's `pull_request` trigger instead. The workflow
+would not run at all, so the required `ci-ok` never reports and the pull request cannot merge.
 
 ### Runners and billing
 

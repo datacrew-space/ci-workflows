@@ -32,6 +32,10 @@ jobs:
       runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}
       # working-directory: path/to/uv-project   # when pyproject.toml is not at the repository root
       tooling-ref: <commit-sha>
+      # Skip lint and test (shown as skipped) on pull requests that change only these paths:
+      # skip-paths: |
+      #   *.md
+      #   docs/*
 
   # Add repository-specific jobs here and list them in `needs` below.
 
