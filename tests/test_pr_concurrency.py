@@ -71,7 +71,10 @@ def test_the_walk_finds_the_known_pull_request_workflows():
     } <= names
 
 
-@pytest.mark.parametrize(("name", "doc"), [w for w in WORKFLOWS if w[0] not in OWN_RULE], ids=lambda v: v if isinstance(v, str) else "")
+CHECKED = [w for w in WORKFLOWS if w[0] not in OWN_RULE]
+
+
+@pytest.mark.parametrize(("name", "doc"), CHECKED, ids=[name for name, _ in CHECKED])
 def test_pull_request_workflow_cancels_only_superseded_pull_request_runs(name, doc):
     assert missing_pull_request_concurrency(doc) is None, name
 
