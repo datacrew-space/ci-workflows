@@ -41,8 +41,11 @@ The shape every repository starts from. Each rule says why, so a variation can b
 
 - `permissions: contents: read` at the top; widen per job.
 - `timeout-minutes` on every job.
-- `concurrency` cancels superseded PR heads and never a run on the default branch:
-  `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`.
+- `concurrency` cancels superseded PR heads and never a run on the default branch. Use exactly
+  `group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}` and
+  `cancel-in-progress: ${{ github.event_name == 'pull_request' }}`. The workflow name stops two
+  workflows cancelling each other. `github.run_id` gives every push its own group: a group shared by
+  pushes (`github.ref`) cancels a *pending* run on the default branch even with cancel-in-progress off.
 - Pin third-party actions by commit SHA with a version comment (this repo's
   `tests/test_review_hardening.py` pins its action SHAs). Lint workflows with actionlint.
 - No untrusted event text (`github.event.pull_request.title`, bodies, branch names) interpolated

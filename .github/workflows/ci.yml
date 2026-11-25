@@ -5,6 +5,15 @@ on:
   push:
     branches: [main]
 
+# A new push to a pull request cancels the run on the head it replaces. Any other run (a push to
+# main, a manual run) gets a group of its own through github.run_id, so it is never queued behind,
+# or cancelled by, a later run. A shared group would cancel a pending run on main: cancel-in-progress
+# protects only the run already in progress. The workflow name keeps this workflow from cancelling a
+# different workflow's run on the same pull request.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 permissions:
   contents: read
 

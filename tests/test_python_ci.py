@@ -197,8 +197,7 @@ def test_scaffold_caller_uses_the_reusable_workflow_and_keeps_the_gate():
     assert gate["if"] == "always()"
     assert gate["name"] == "ci-ok"
     assert caller["permissions"] == {"contents": "read"}
-    # The default cancels only pull-request runs, never pushes to the default branch.
-    assert caller["concurrency"]["cancel-in-progress"] == "${{ github.event_name == 'pull_request' }}"
+    # Its concurrency follows the rule every pull_request workflow follows: tests/test_pr_concurrency.py.
 
 
 def test_detect_secrets_scans_workflow_files_and_skips_only_sha_pin_lines():

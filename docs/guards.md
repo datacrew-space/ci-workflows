@@ -64,7 +64,9 @@ repos:
       - id: commit-identity
 ```
 
-CI, a workflow that calls the reusable one (see `examples/guards-caller.yml`):
+CI, a workflow that calls the reusable one. Copy the whole of `examples/guards-caller.yml`, which
+also carries the `concurrency` block that cancels superseded pull-request runs; the fragment below
+shows only the job:
 
 ```yaml
 jobs:
