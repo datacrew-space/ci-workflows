@@ -47,6 +47,7 @@ def test_inputs_and_defaults():
     assert ins["node-version"]["default"] == ""
     assert ins["env"]["default"] == ""
     assert ins["index-names"]["default"] == ""
+    assert ins["skip-paths"]["default"] == ""
     assert ins["run-test"]["type"] == "boolean"
     assert ins["run-test"]["default"] is True
     assert all(i["type"] == "string" for n, i in ins.items() if n != "run-test")
@@ -54,8 +55,8 @@ def test_inputs_and_defaults():
 
 def test_only_the_test_job_is_skipped_by_run_test():
     # Negative case: lint must keep running when run-test is false, so it carries no such guard.
-    assert PYCI["jobs"]["test"]["if"] == "inputs.run-test"
-    assert "if" not in PYCI["jobs"]["lint"]
+    assert "inputs.run-test" in PYCI["jobs"]["test"]["if"]
+    assert "run-test" not in PYCI["jobs"]["lint"]["if"]
 
 
 def test_infisical_secrets_are_optional():
@@ -81,7 +82,7 @@ def test_lint_puts_the_pinned_python_on_path_and_node_only_when_asked():
 def test_has_lint_and_test_but_no_gate_job():
     # A ci-ok inside a called workflow would be reported as `<caller job> / ci-ok` and rename the
     # required check, so the gate belongs to the caller.
-    assert sorted(PYCI["jobs"]) == ["lint", "test"]
+    assert sorted(PYCI["jobs"]) == ["classify", "lint", "test"]
 
 
 def test_both_jobs_take_the_runner_from_the_input_and_have_a_timeout():
@@ -192,6 +193,8 @@ def test_scaffold_caller_uses_the_reusable_workflow_and_keeps_the_gate():
     caller = load(SCAFFOLD / ".github" / "workflows" / "ci.yml")
     assert sorted(caller["jobs"]) == ["ci-ok", "python"]
     assert caller["jobs"]["python"]["uses"].startswith("datacrew-space/ci-workflows/.github/workflows/python-ci.yml@")
+    # The docs-only skip lives inside the reusable workflow; an `if:` here would skip the gate's input.
+    assert "if" not in caller["jobs"]["python"]
     gate = caller["jobs"]["ci-ok"]
     assert gate["needs"] == ["python"]
     assert gate["if"] == "always()"

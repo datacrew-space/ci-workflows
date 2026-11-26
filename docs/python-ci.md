@@ -24,13 +24,15 @@ the lint and test foundation under them.
 
 ## The reusable workflow
 
-Two jobs. `lint` runs `pre-commit run --all-files` at the repository root. `test` runs
-`uv sync` then `pytest` in `working-directory`.
+Three jobs. `lint` runs `pre-commit run --all-files` at the repository root. `test` runs
+`uv sync` then `pytest` in `working-directory`. `classify` runs only when `skip-paths` is set (see
+[Skipping docs-only pull requests](#skipping-docs-only-pull-requests)).
 
 | Input | Default | Meaning |
 |---|---|---|
+| `skip-paths` | `""` | Path patterns, one per line, for files that are not code. A pull request whose changed files all match skips `lint` and `test`, shown as skipped (see [Skipping docs-only pull requests](#skipping-docs-only-pull-requests)). Empty never skips |
 | `run-test` | `true` | Run the `test` job. `false` skips it and leaves `lint` running (see [Keeping your own test job](#keeping-your-own-test-job)) |
-| `runs-on` | `"ubuntu-latest"` | **JSON** label or label array for both jobs |
+| `runs-on` | `"ubuntu-latest"` | **JSON** label or label array for every job |
 | `python-version` | `3.13` | Python for uv |
 | `uv-version`, `pre-commit-version` | pinned | Tool versions, pinned so runs are reproducible |
 | `working-directory` | `.` | Directory with `pyproject.toml` and `uv.lock`, for `test` |
@@ -83,6 +85,54 @@ test job. Its `ci-ok` must `needs` both the called-workflow job and its local te
 can be missing from the gate. With `run-test: false` the shared `python / test` reports as skipped;
 keep `ci-ok` failing only on `failure` or `cancelled` (as the scaffold's gate does), because a
 skipped job must not fail it. The shared workflow adds no pre-sync scripts or services.
+
+### Skipping docs-only pull requests
+
+Set `skip-paths` to the patterns of files that are not code:
+
+```yaml
+    with:
+      skip-paths: |
+        *.md
+        docs/*.png
+```
+
+On a pull request, the `python / classify` job lists the changed files (through the compare API, with
+the job's read-only token). If every file matches a pattern, `python / lint` and `python / test` are
+skipped as jobs, so the checks list shows them as skipped, and the classify job's summary says which
+case applied and which patterns matched.
+
+- Any file that matches no pattern runs both jobs, and the summary names that file.
+- A rename counts both its old and new path, so moving code under a skipped path runs both jobs.
+- Pushes, manual runs and an empty `skip-paths` never skip. `classify` then shows as skipped.
+- Only pull requests to the default branch can skip. A stacked pull request is compared with its
+  parent branch, and retargeting it reruns nothing, so it would keep a green `ci-ok` it earned against
+  the parent.
+- A change of 300 or more files runs both jobs, because the compare API lists at most 300.
+- An API error fails `classify`, so the gate goes red. It never skips. Lint and test still run.
+- The caller's `python` job reports `success` when lint and test were skipped this way, so `ci-ok`
+  never has to accept a skipped needed job.
+
+**Patterns.** A pattern is a bash pattern matched against the whole path:
+
+- `*` and `?` also match `/`, so `docs/*` matches `docs/conf.py` and any code under `docs/`. Prefer
+  extensions (`*.md`, `docs/*.png`).
+- Matching is case-sensitive: `*.md` does not match `README.MD`.
+- There is no brace expansion (`*.{png,jpg}` matches nothing; list each one) and no gitignore-style
+  `!` negation. A line starting with `#` is a comment, but a `#` after a pattern is part of it.
+- extglob is on, so `!(…)` matches everything the inner pattern does not, and a lone `*` matches every
+  file: either one turns the skip on for code.
+
+**What a skip also skips.** `lint` runs every pre-commit hook, including the secret scanners
+(`detect-secrets`, `detect-private-key`). A skipped pull request is not scanned until it reaches the
+default branch, after it is public. A repository that relies on lint for secret scanning should also
+run the [guards workflow](guards.md), which a docs-only pull request does not skip.
+
+**Runner.** `classify` calls the GitHub CLI (`gh`). On a self-hosted runner without it, every pull
+request that sets `skip-paths` fails `classify` and turns the gate red.
+
+Do not use `paths-ignore` (or `paths`) on the caller's `pull_request` trigger instead. The workflow
+would not run at all, so the required `ci-ok` never reports and the pull request cannot merge.
 
 ### Runners and billing
 
