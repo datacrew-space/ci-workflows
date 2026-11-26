@@ -1,0 +1,27 @@
+# Optional: check that pull-request titles follow Conventional Commits, so squash-merge subjects share
+# one style. Copy to .github/workflows/pr-title.yml and pin the ref to a reviewed commit.
+# To enforce it, add its check, `title / title`, as a required status check. Do not add it to ci-ok's
+# `needs`: ci-ok lives in another workflow file, and `needs` only names jobs in the same file.
+# Bot titles (`Bump x from 1 to 2`, `Update dependency x`) and GitHub's `Revert "..."` fail the check;
+# configure the bot's commit prefix (e.g. `chore(deps):`) and edit revert titles before requiring it.
+name: PR title
+
+on:
+  pull_request:
+    # `edited` reruns the check when the title is fixed, without a new push. Body and base edits also
+    # fire it; each run is a few seconds.
+    types: [opened, edited, synchronize, reopened]
+
+# A new push or edit to a pull request cancels the run it replaces; see tests/test_pr_concurrency.py.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions: {}
+
+jobs:
+  title:
+    uses: datacrew-space/ci-workflows/.github/workflows/pr-title.yml@<commit-sha>
+    with:
+      runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}
+      # types: feat fix docs chore   # narrow or widen the allowed types
