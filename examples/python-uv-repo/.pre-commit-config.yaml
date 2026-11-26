@@ -60,6 +60,22 @@ repos:
     rev: 0.13.7
     hooks:
       - id: uv-lock
+  # DOCS HOOKS SLOT (docs/docs-hooks.md). Uncomment, pin `rev` to a ci-workflows commit SHA you have
+  # reviewed, and set `files` to the repository's public docs. gitattributes-lf pairs with the
+  # scaffold's .gitattributes.
+  # - repo: https://github.com/datacrew-space/ci-workflows
+  #   rev: <commit-sha>
+  #   hooks:
+  #     - id: gitattributes-lf
+  #     - id: docs-internal-refs
+  #       files: '^docs/'
+  #       args: [--patterns, .docs-internal-patterns.txt]
+  #     - id: docs-private-links
+  #       files: '^docs/'
+  #       args: [--private-repos-file, .docs-private-repos.txt, --bare-refs]
+  #     - id: docs-python-imports
+  #       files: '^docs/'
+  #       args: [--package, <your_package>]
   - repo: local
     hooks:
       - id: block-env-files

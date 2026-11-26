@@ -221,7 +221,10 @@ def test_history_workflow_is_weekly_manual_and_scans_all_history():
 
 def test_exported_hooks():
     hooks = {h["id"]: h for h in yaml.safe_load((ROOT / ".pre-commit-hooks.yaml").read_text())}
-    assert set(hooks) == {"private-terms", "private-terms-message", "commit-identity"}
+    assert set(hooks) == {
+        "private-terms", "private-terms-message", "commit-identity",
+        "docs-internal-refs", "docs-private-links", "docs-python-imports", "gitattributes-lf",
+    }
     assert {h["language"] for h in hooks.values()} == {"script"}
     assert hooks["private-terms"]["entry"] == "scripts/check-private-terms.sh --staged"
     assert hooks["private-terms-message"]["entry"] == "scripts/check-private-terms.sh --message"

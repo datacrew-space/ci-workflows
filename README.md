@@ -9,6 +9,10 @@ Also here: the public-repo **guards** ([docs/guards.md](docs/guards.md)) and **P
 projects**, a reusable lint and test workflow plus base pre-commit and ruff configs
 ([docs/python-ci.md](docs/python-ci.md), scaffold in [`examples/python-uv-repo/`](examples/python-uv-repo)).
 
+And four **docs hooks** for repositories that publish documentation: internal references, links to
+private trackers, Python samples whose imports don't resolve, and a missing LF `.gitattributes`
+([docs/docs-hooks.md](docs/docs-hooks.md)).
+
 A pull request gets an independent review from a reviewer agent. If the reviewer asks for changes,
 a responder agent may push small fixes to the PR branch, and the PR is reviewed once more. The loop
 ends **green** (ready to merge) or **red** with a `needs-human` label. See the header of
