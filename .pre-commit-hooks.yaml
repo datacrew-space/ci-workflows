@@ -21,3 +21,34 @@
   pass_filenames: false
   always_run: true
   stages: [pre-commit]
+# Docs hooks. They run Python through scripts/run-python.sh, which uses the caller's environment
+# (docs-python-imports imports the caller's own package). See docs/docs-hooks.md.
+- id: docs-internal-refs
+  name: docs-internal-refs (public docs)
+  entry: scripts/run-python.sh scripts/check_docs_internal_refs.py
+  language: script
+  minimum_pre_commit_version: 3.2.0
+  types_or: [markdown, text]
+  stages: [pre-commit]
+- id: docs-private-links
+  name: docs-private-links (public docs)
+  entry: scripts/run-python.sh scripts/check_docs_private_links.py
+  language: script
+  minimum_pre_commit_version: 3.2.0
+  types_or: [markdown, text]
+  stages: [pre-commit]
+- id: docs-python-imports
+  name: docs-python-imports (doc samples)
+  entry: scripts/run-python.sh scripts/check_docs_python_imports.py
+  language: script
+  minimum_pre_commit_version: 3.2.0
+  types: [markdown]
+  stages: [pre-commit]
+- id: gitattributes-lf
+  name: gitattributes-lf
+  entry: scripts/run-python.sh scripts/check_gitattributes.py
+  language: script
+  minimum_pre_commit_version: 3.2.0
+  pass_filenames: false
+  always_run: true
+  stages: [pre-commit]

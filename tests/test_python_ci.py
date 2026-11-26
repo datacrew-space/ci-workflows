@@ -393,3 +393,7 @@ def test_scaffold_gate_names_the_failing_job(result, code, message):
     done = subprocess.run([BASH, "-c", s["run"]], env=env, capture_output=True, text=True)
     assert done.returncode == code
     assert message in done.stdout
+
+
+def test_scaffold_stores_text_with_lf_endings():
+    assert "* text=auto eol=lf" in (SCAFFOLD / ".gitattributes").read_text().splitlines()
