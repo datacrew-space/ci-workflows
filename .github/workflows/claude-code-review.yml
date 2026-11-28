@@ -687,6 +687,9 @@ jobs:
           github_token: ${{ steps.agent-token.outputs.token }}
           bot_name: ${{ format('{0}[bot]', inputs.responder-bot-login) }}
           bot_id: ${{ inputs.responder-bot-id }}
+          # Same list as the reviewer step: a bot-opened PR (e.g. the issue dispatcher's) triggers
+          # this job as that bot, and the action refuses unlisted bot actors. Pinned by a test.
+          allowed_bots: ${{ inputs.allowed-bots && format('{0},{1}', inputs.responder-bot-login, inputs.allowed-bots) || inputs.responder-bot-login }}
           # Edit and commit locally, read the PR. It runs NOTHING of the repository's: no pytest,
           # pre-commit or uvx (each executes code the PR author wrote, as root, on a runner whose
           # container layer outlives the job). CI runs the checks on the pushed commits. It cannot

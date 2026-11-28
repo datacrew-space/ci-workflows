@@ -66,7 +66,8 @@ change) before you move a caller to this version. Until then the review job fail
 ## Lesson learned: `allowed-bots`
 
 `claude-code-action` refuses to start on a PR whose actor is a bot unless that bot is listed in
-`allowed_bots`. The review loop always allows its own responder. **Every other bot that opens or pushes
+`allowed_bots`. The review loop always allows its own responder, and passes the same list to both the
+reviewer and the responder steps (a bot-opened PR triggers both as that bot). **Every other bot that opens or pushes
 PRs must be added too**, for example the issue dispatcher's GitHub App: otherwise its PR gets no review,
 the run fails before it starts, and `review-verdict` never leaves `pending`. This workflow exposes it as
 the `allowed-bots` input (added together with the dispatcher; before that only the responder could be

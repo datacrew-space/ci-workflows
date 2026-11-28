@@ -41,6 +41,22 @@ def test_review_step_accepts_the_responder_as_a_bot_actor(jobs):
     assert ON_INPUTS["responder-bot-login"]["default"] == "ci-review-responder"
 
 
+def test_every_claude_code_action_step_allows_the_same_bots(jobs):
+    """The responder runs on the same PR, so the same bot actor triggers it (issue #100).
+
+    A bot-opened PR whose round-1 review asks for changes must reach the responder; a list that
+    differs between the two steps lets the review run and then refuses the fix round.
+    """
+    lists = {
+        (job_id, s.get("id")): s.get("with", {}).get("allowed_bots")
+        for job_id, job in jobs.items()
+        for s in job.get("steps", [])
+        if "anthropics/claude-code-action@" in s.get("uses", "")
+    }
+    assert {("claude-review", "claude-review"), ("respond", "respond-agent")} <= lists.keys()
+    assert len(set(lists.values())) == 1, f"allowed_bots differs between claude-code-action steps: {lists}"
+
+
 def test_allowed_bots_is_an_input_that_defaults_to_no_extra_bots():
     """A bot that opens or pushes PRs (e.g. the issue dispatcher) must be listed or its review fails to start."""
     assert ON_INPUTS["allowed-bots"]["default"] == ""
