@@ -1,0 +1,53 @@
+name: Claude Code Review (this repository)
+
+# This repository's own caller of its reusable review loop, so ci-workflows PRs are reviewed like
+# every other repository's. Modelled on the other callers (see examples/caller.yml and README.md).
+#
+# NEVER call the reusable workflow by a local path (`uses: ./.github/workflows/claude-code-review.yml`).
+# A local ref runs the workflow from the PR's own checkout, so a PR that edits the reviewer, the gate
+# or the verdict scripts would be graded by its own edited code. Pin BOTH the `uses:` ref and
+# `tooling-ref` to the same commit SHA on main, and bump them together in a reviewed PR whenever the
+# reusable workflow or its scripts change. A PR that changes them is reviewed by the pinned (older)
+# version until that bump merges.
+#
+# The agent prompts are read from the BASE branch (.agents/agents/), so a PR cannot edit its reviewer.
+
+on:
+  pull_request:
+    # Keep `edited`: a stacked PR that GitHub retargets to main after its parent merges fires
+    # `edited`, not `synchronize`. Title/body edits are ignored by the `if:` and the group below.
+    types: [opened, synchronize, ready_for_review, reopened, edited]
+
+# A review of a superseded head is wasted tokens; review only the latest push. Except the
+# responder's own push: that run waits, so the run that pushed still reaches its `report` job.
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}${{ github.event.action == 'edited' && github.event.changes.base == null && '-edit' || '' }}
+  cancel-in-progress: ${{ github.event.sender.login != 'ci-review-responder[bot]' }}
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: write
+  issues: write
+  checks: read
+  actions: read
+
+jobs:
+  review:
+    # Opt-in: set the repository variable CLAUDE_REVIEW_ENABLED=true once the repo secrets
+    # INFISICAL_CLIENT_ID/SECRET and the variables INFISICAL_DOMAIN and INFISICAL_PROJECT_SLUG exist and the
+    # three Apps are installed on this repository. This repository is public and its guards refuse private
+    # host and project names, so the Infisical coordinates are variables, not literals.
+    if: ${{ vars.CLAUDE_REVIEW_ENABLED == 'true' && (github.event.action != 'edited' || github.event.changes.base != null) }}
+    uses: datacrew-space/ci-workflows/.github/workflows/claude-code-review.yml@c382df46dff8241ebe8f06dabc58b9956ce11d57
+    with:
+      tooling-ref: c382df46dff8241ebe8f06dabc58b9956ce11d57
+      infisical-domain: ${{ vars.INFISICAL_DOMAIN }}
+      infisical-project-slug: ${{ vars.INFISICAL_PROJECT_SLUG }}
+      runs-on: ${{ vars.CI_RUNS_ON || '"ubuntu-latest"' }}
+      reviewer-agent: .agents/agents/code-reviewer.md
+      responder-agent: .agents/agents/review-responder.md
+      # No push-runs-on: the responder stays off, so the loop reviews but never pushes fixes.
+    secrets:
+      INFISICAL_CLIENT_ID: ${{ secrets.INFISICAL_CLIENT_ID }}
+      INFISICAL_CLIENT_SECRET: ${{ secrets.INFISICAL_CLIENT_SECRET }}
