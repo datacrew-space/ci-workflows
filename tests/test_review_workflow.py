@@ -126,9 +126,9 @@ def test_respond_only_runs_for_a_round_one_changes_requested(jobs):
 def test_report_runs_after_every_review_that_ran(jobs):
     """Every run ends with one orchestrator report: approved, pending, tooling failure or needs-human."""
     assert " ".join(str(jobs["report"]["if"]).split()) == (
-        "${{ !cancelled() && needs.claude-review.result != 'skipped' }}"
+        "${{ !cancelled() && (needs.claude-review.result != 'skipped' || needs.gate.outputs.carried != '') }}"
     )
-    assert jobs["report"]["needs"] == ["claude-review", "respond", "push"]
+    assert jobs["report"]["needs"] == ["gate", "claude-review", "respond", "push"]
     assert "escalate" not in jobs
 
 
@@ -542,7 +542,7 @@ def test_tooling_is_never_checked_out_with_actions_checkout_outside_the_workspac
 
 
 def test_the_gate_reads_statuses_only_and_the_review_waits_for_it(jobs):
-    assert jobs["gate"]["permissions"] == {"statuses": "read"}
+    assert jobs["gate"]["permissions"] == {"contents": "read", "statuses": "read"}
     assert jobs["claude-review"]["needs"] == "gate"
     condition = " ".join(str(jobs["claude-review"]["if"]).split())
     # The skip clause is added to the draft, fork and base-branch clauses, never in place of them.
@@ -577,3 +577,22 @@ def test_a_skipped_review_leaves_the_later_jobs_and_the_verdict_alone(jobs):
 
 def test_the_orchestrator_login_input_defaults_to_the_orchestrator_app():
     assert ON_INPUTS["orchestrator-bot-login"]["default"] == "ci-review-orchestrator"
+
+
+def test_the_gate_carries_a_verdict_but_only_report_sets_it(jobs):
+    """The gate decides (read-only token, no model); the orchestrator in `report` is the only writer."""
+    gate = jobs["gate"]
+    carry = step(gate, "carry")
+    assert carry["continue-on-error"] is True
+    assert "review-carry.sh" in carry["run"] and "github.run_attempt" in str(carry["env"])
+    assert carry["run"].index('echo "carried="') < carry["run"].index("carried=$carried")
+    assert "statuses/" not in carry["run"] and "state=success" not in carry["run"]
+    assert "carry.outputs.carried" in str(gate["outputs"]["skip"]) and "decide.outputs.skip" in str(gate["outputs"]["skip"])
+    report_carry = next(s for s in jobs["report"]["steps"] if s.get("name") == "Carry the verdict to the new head")
+    assert "needs.gate.outputs.carried != ''" in report_carry["if"] and "steps.orchestrator-token" in str(report_carry["env"])
+    assert "state=success" in report_carry["run"] and "Carried from" in report_carry["run"]
+    # A carried verdict never overrides a review that ran.
+    assert "needs.claude-review.result == 'skipped'" in report_carry["if"]
+    # The round report is for a review that ran.
+    round_step = next(s for s in jobs["report"]["steps"] if s.get("name") == "Report the round on the PR")
+    assert "needs.claude-review.result != 'skipped'" in round_step["if"]

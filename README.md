@@ -56,6 +56,33 @@ Updating every repository is then a one-line bump of the pinned SHA in each call
 
 A `gate` job (no model, `statuses: read` only) runs before the review and reads the commit statuses of the PR head. When the newest `review-verdict` is `success` or `failure` **and** the orchestrator App set it, the paid review is skipped and the existing verdict stays as it is; the job summary says so, with the SHA. So `ready_for_review`, `reopened` or a base retarget on an unchanged head cost nothing. The review still runs when the status is `pending`, `error`, missing or set by anyone else, when the workflow is re-run (`run_attempt` above 1), and whenever the gate itself fails. A tooling failure (the review or the responder died, or no verdict came out) is reported as `error`, not `failure`: both are red and block a merge that requires `review-verdict`, but only `error` is retried, so `ready_for_review` or `reopened` on the same head runs the review again. `failure` is reserved for a decision about the code (two rounds did not converge, or the responder pushed nothing) and stays until the head changes. The decision is [`scripts/review-skip.sh`](scripts/review-skip.sh).
 
+### Carried verdict: merging the base into an approved PR
+
+A coordinator that merges the base branch into an approved PR creates a new head with no verdict, and
+a full review would run again for code nobody wrote. When the head has no finished verdict, the gate
+walks first-parent from the head. Every commit since an ancestor that holds an orchestrator-set
+`success` must be a **clean base merge**:
+
+- it has exactly 2 parents;
+- its second parent is an ancestor of `origin/<base>`;
+- `git merge-tree --write-tree <p1> <p2>` produces exactly the commit's tree, so the merge needed no
+  conflict resolution and holds no edit.
+
+If all of that holds, the review is skipped and the orchestrator App sets `review-verdict` to
+`success` on the new head. The status description and the "Review loop" comment say
+`Carried from <sha7>: only clean merges of <base> since`. Only `success` is carried. A `failure`,
+`error` or `pending` orchestrator verdict on the way, a verdict set by anyone else, a non-merge
+commit, a merge of anything but the base, a tree mismatch, a re-run (`run_attempt` above 1) and any
+error in the check all run the normal review. A carried verdict cannot hide new PR code, because
+tree equality with the automatic merge is required: the merge adds only what is already on the base.
+The decision is [`scripts/review-carry.sh`](scripts/review-carry.sh). The gate fetches the head and
+the base branch as commits and trees only (`--filter=blob:none`), not the full clone the review does.
+
+**Upgrading.** Callers get this only after bumping their `uses:` and `tooling-ref` pin. The `gate` job
+now asks for `contents: read` besides `statuses: read` (to fetch history), so a caller whose workflow
+or job sets narrower `permissions` must allow it. The orchestrator App needs no new permission: the
+`report` job already holds its token (`statuses: write`, `pull-requests: write`, `issues: write`).
+
 ## Upgrading: the reviewer App needs Issues: read
 
 The reviewer's token now asks for `issues: read`, so the Spec axis can read the issue a PR closes.
