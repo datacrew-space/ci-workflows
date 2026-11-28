@@ -26,6 +26,10 @@ name: Claude Code Review (reusable)
 # re-run of the workflow (run_attempt > 1). A tooling failure is reported as `error` (see
 # scripts/review-report.sh), so the next event on the same head retries it; `failure` is only a
 # decision about the code. The decision is scripts/review-skip.sh.
+# A new head that only merges the base into an approved head is not new code either: when every commit
+# since an orchestrator-approved ancestor is a clean base merge (2 parents, second parent on the base,
+# tree equal to the automatic merge), the gate skips the review and `report` sets `success` on the new
+# head ("Carried from <sha7>"). The decision is scripts/review-carry.sh.
 #
 # Everything environment-specific is an input or a secret of the CALLER: the secret store
 # coordinates, the runner labels, the agent prompt paths. Nothing here names a host or an account.
@@ -155,8 +159,12 @@ jobs:
       && github.event.pull_request.base.ref == inputs.base-branch }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     outputs:
-      skip: ${{ steps.decide.outputs.skip }}
+      # True when the head already has a finished verdict, or when the verdict of an earlier commit is
+      # carried over clean merges of the base. A carried verdict is set by `report`, not here.
+      skip: ${{ steps.decide.outputs.skip == 'true' || steps.carry.outputs.carried != '' }}
+      carried: ${{ steps.carry.outputs.carried }}
     permissions:
+      contents: read # fetch the history for the carry check
       statuses: read
     steps:
       # Same fetch as the review job, but a failure here must not stop the review: fail open.
@@ -201,6 +209,58 @@ jobs:
             echo "skip=true" >> "$GITHUB_OUTPUT"
             echo "::notice title=review skipped::$SHA: $reason"
             echo "review skipped for $SHA: $reason; the existing review-verdict is unchanged" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # A coordinator merging the base into an approved PR makes a new head. When only clean merges of
+      # the base came since a head the orchestrator approved, the merge is not new code (see
+      # scripts/review-carry.sh), so the review is skipped and `report` carries the verdict. History is
+      # fetched as commits and trees only (no blobs); merge-tree reads the few blobs it needs on demand.
+      # The token is read-only and no agent runs in this job. Any trouble here reviews.
+      - name: Carry the verdict over clean merges of the base
+        id: carry
+        if: ${{ steps.decide.outputs.skip != 'true' }}
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          ORCHESTRATOR: ${{ inputs.orchestrator-bot-login }}
+          ATTEMPT: ${{ github.run_attempt }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -u
+          echo "carried=" >> "$GITHUB_OUTPUT"
+          if [ ! -f "${TOOLING:-}/scripts/review-carry.sh" ]; then
+            echo "::warning::gate: tooling not available; reviewing"
+            exit 0
+          fi
+          if ! [[ "$ORCHESTRATOR" =~ ^[A-Za-z0-9-]+$ && "$SHA" =~ ^[0-9a-f]{40}$ && "$BASE" =~ ^[A-Za-z0-9._/-]+$ ]]; then
+            echo "::warning::gate: unexpected orchestrator-bot-login, head sha or base ref; reviewing"
+            exit 0
+          fi
+          # Authenticate git through the environment, so the token is in no command line or config file.
+          auth=$(printf 'x-access-token:%s' "$GH_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::$auth"
+          export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.$SERVER_URL/.extraheader" GIT_CONFIG_VALUE_0="Authorization: basic $auth"
+          repo_dir="$RUNNER_TEMP/carry-history"
+          git init -q "$repo_dir"
+          git -C "$repo_dir" remote add origin "$SERVER_URL/$REPO.git"
+          if ! git -C "$repo_dir" fetch -q --no-tags --filter=blob:none origin \
+            "$SHA" "+refs/heads/$BASE:refs/remotes/origin/$BASE"; then
+            echo "::warning::gate: could not fetch the history; reviewing"
+            exit 0
+          fi
+          out=$(bash "$TOOLING/scripts/review-carry.sh" "$repo_dir" "$SHA" "origin/$BASE" "$ORCHESTRATOR" "$ATTEMPT")
+          decision="${out%%|*}"
+          rest="${out#*|}"
+          carried="${rest%%|*}"
+          reason="${rest#*|}"
+          echo "gate: carry check $decision ($reason)"
+          if [ "$decision" = "carry" ] && [[ "$carried" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "carried=$carried" >> "$GITHUB_OUTPUT"
+            echo "::notice title=review skipped::$SHA: carried from ${carried:0:7}, $reason"
+            echo "review skipped for $SHA: carried from ${carried:0:7}, $reason" >> "$GITHUB_STEP_SUMMARY"
           fi
 
   claude-review:
@@ -939,8 +999,9 @@ jobs:
   # It decides nothing itself: scripts/review-report.sh does (tests/test_review_report.py).
   # No agent runs in this job, so the orchestrator key never shares an env with one.
   report:
-    needs: [claude-review, respond, push]
-    if: ${{ !cancelled() && needs.claude-review.result != 'skipped' }}
+    needs: [gate, claude-review, respond, push]
+    # Runs for a review, and also for a carried verdict (the review is skipped then).
+    if: ${{ !cancelled() && (needs.claude-review.result != 'skipped' || needs.gate.outputs.carried != '') }}
     runs-on: ${{ fromJSON(inputs.runs-on) }}
     timeout-minutes: 10
     permissions:
@@ -997,6 +1058,7 @@ jobs:
           permission-issues: write
 
       - name: Report the round on the PR
+        if: ${{ needs.claude-review.result != 'skipped' }}
         env:
           GH_TOKEN: ${{ steps.orchestrator-token.outputs.token }}
           REPO: ${{ github.repository }}
@@ -1039,4 +1101,31 @@ jobs:
 
           **Needs a human**, @${OWNER}: merge as is, send back with direction, or close."
           fi
+          gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null
+
+      # The review was skipped because only clean merges of the base came since a head the orchestrator
+      # approved (decided in `gate`). Set success on the new head, name the commit it came from, and say
+      # so in the same "Review loop" comment form as a review. The success is only ever carried, never
+      # made up: the gate checked the history, this step only re-checks the shape of its output.
+      - name: Carry the verdict to the new head
+        if: ${{ needs.claude-review.result == 'skipped' && needs.gate.outputs.carried != '' }}
+        env:
+          GH_TOKEN: ${{ steps.orchestrator-token.outputs.token }}
+          REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          SHA: ${{ github.event.pull_request.head.sha }}
+          BASE: ${{ github.event.pull_request.base.ref }}
+          CARRIED: ${{ needs.gate.outputs.carried }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -eu
+          if ! [[ "$CARRIED" =~ ^[0-9a-f]{40}$ && "$SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::unexpected sha for the carried verdict"
+            exit 1
+          fi
+          message="Carried from ${CARRIED:0:7}: only clean merges of $BASE since"
+          echo "report: success, $message" >> "$GITHUB_STEP_SUMMARY"
+          gh api "repos/$REPO/statuses/$SHA" -f state=success -f context=review-verdict \
+            -f description="${message:0:140}" -f target_url="$RUN_URL" > /dev/null
+          body="**Review loop**: \`${SHA:0:7}\` $message ([run]($RUN_URL))"
           gh api "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" > /dev/null

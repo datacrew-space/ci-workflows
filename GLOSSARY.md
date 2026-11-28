@@ -26,6 +26,14 @@ The three roles in the loop, each acting through its own GitHub App: the reviewe
 review, the responder posts its response and pushes fixes, and the orchestrator (plain workflow
 code, no model) reports the verdict and applies `needs-human`.
 
+**Carried verdict**
+A `success` verdict the orchestrator set on an earlier head of a pull request, set again on a new
+head because only clean base merges came since. See the README.
+
+**Clean base merge**
+A merge commit whose second parent is on the base branch and whose tree is exactly what an automatic
+merge of its parents gives: no conflict resolution, no edit.
+
 **`needs-human`**
 The label on a red pull request whose code needs a person's decision. Red without it is a tooling
 failure: re-run the workflow.
