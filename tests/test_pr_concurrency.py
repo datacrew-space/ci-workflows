@@ -25,8 +25,8 @@ CANONICAL = {
     "group": "${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}",
     "cancel-in-progress": "${{ github.event_name == 'pull_request' }}",
 }
-# The review caller cancels on every event except the responder's push; tested in its own suite.
-OWN_RULE = {"examples/caller.yml"}
+# The review callers (the example and this repository's own) cancel on every event except the responder's push.
+OWN_RULE = {"examples/caller.yml", ".github/workflows/review.yml"}
 
 
 def _triggers(doc: dict) -> set[str]:
